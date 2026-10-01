@@ -117,3 +117,4 @@ npm run test:portable
 Se generan en `release`. El empaquetado debe hacerse en Windows x64, requiere Internet para descargar herramientas de Electron/NSIS y no publica automaticamente en GitHub. Sube los dos EXE y `SHA256SUMS.txt` como assets de una Release; no los agregues al historial Git. Para otra version, actualiza `package.json` y `package-lock.json` con `npm version X.Y.Z --no-git-tag-version` y ajusta los nombres en estas instrucciones.
 
 La interfaz usa React y TypeScript; SQLite solo es accesible desde el proceso principal. El renderer esta aislado, sin Node, con sandbox y un puente IPC limitado. Los tests Electron usan una carpeta temporal separada y no tocan el tracking real. El test portable usa una copia del EXE en una carpeta temporal y datos sinteticos; no ejecuta el instalador sobre la cuenta del usuario.
+# closures
