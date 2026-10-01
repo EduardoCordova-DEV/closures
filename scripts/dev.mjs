@@ -1,0 +1,11 @@
+import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
+import { createServer } from "vite";
+import "./build-electron.mjs";
+const require = createRequire(import.meta.url);
+const server = await createServer();
+await server.listen();
+const child = spawn(require("electron"), [".", "--dev"], { stdio: "inherit" });
+child.on("error", async error => { console.error(error); await server.close(); process.exitCode = 1; });
+child.on("exit", async code => { await server.close(); process.exitCode = code ?? 1; });
+process.on("SIGINT", () => child.kill());

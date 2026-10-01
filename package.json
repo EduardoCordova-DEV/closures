@@ -1,0 +1,65 @@
+{
+  "name": "cierres",
+  "productName": "Cierres",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tracking local de casos y cierres semanales",
+  "author": "EduardoCordova-DEV",
+  "repository": { "type": "git", "url": "https://github.com/EduardoCordova-DEV/closures.git" },
+  "homepage": "https://github.com/EduardoCordova-DEV/closures",
+  "engines": { "node": ">=22.12" },
+  "type": "module",
+  "main": "dist-electron/main.cjs",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck && vite build && node scripts/build-electron.mjs",
+    "start": "electron .",
+    "test": "tsx --test tests/core.test.ts tests/data-path.test.ts",
+    "test:electron": "tsx --test tests/electron.test.ts",
+    "test:portable": "tsx --test tests/portable.test.ts",
+    "package": "npm run build && electron-builder --win dir",
+    "package:release": "npm run build && electron-builder --win nsis portable --x64 --publish never && node scripts/release-checksums.mjs",
+    "install:local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\install-local.ps1"
+  },
+  "dependencies": {
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "6.1.1",
+    "electron": "44.4.3",
+    "electron-builder": "26.15.3",
+    "esbuild": "^0.28.0",
+    "playwright": "1.63.0",
+    "tsx": "^4.20.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.0"
+  },
+  "build": {
+    "appId": "local.cierres.desktop",
+    "productName": "Cierres",
+    "directories": { "output": "release" },
+    "files": ["dist/**/*", "dist-electron/**/*", "assets/*", "package.json"],
+    "asar": true,
+    "win": { "target": "dir", "signExecutable": false, "icon": "assets/icon.ico" },
+    "nsis": {
+      "artifactName": "Cierres-Setup-${version}-${arch}.${ext}",
+      "oneClick": true,
+      "perMachine": false,
+      "runAfterFinish": false,
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": false,
+      "createStartMenuShortcut": true,
+      "installerLanguages": ["es_ES", "en_US"]
+    },
+    "portable": {
+      "artifactName": "Cierres-Portable-${version}-${arch}.${ext}",
+      "requestExecutionLevel": "user"
+    }
+  }
+}
