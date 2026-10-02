@@ -32,17 +32,37 @@ export const eventSchema = z.object({
   action: z.enum(["created", "updated", "closed", "reopened", "deleted"]),
   at: z.iso.datetime(), record: caseRecordSchema
 });
-export const backupSchema = z.object({
+export const todoInputSchema = z.object({
+  title: z.string().trim().min(1, "Escribe el titulo de la tarea.").max(240),
+  notes: z.string().trim().max(4000),
+  dueDate: isoDate.nullable(),
+  reminderAt: z.iso.datetime().nullable(),
+  caseId: z.uuid().nullable()
+});
+export const todoRecordSchema = todoInputSchema.extend({
+  id: z.uuid(), createdAt: z.iso.datetime(), updatedAt: z.iso.datetime(),
+  completedAt: z.iso.datetime().nullable(), deletedAt: z.iso.datetime().nullable(),
+  reminderNotifiedAt: z.iso.datetime().nullable()
+});
+const legacyBackupSchema = z.object({
   schemaVersion: z.literal(1), exportedAt: z.iso.datetime(),
   cases: z.array(caseRecordSchema).max(100000),
   events: z.array(eventSchema).max(500000)
 });
+export const backupSchema = z.union([
+  legacyBackupSchema.extend({ schemaVersion: z.literal(2), todos: z.array(todoRecordSchema).max(100000) }),
+  legacyBackupSchema.transform(value => ({ ...value, schemaVersion: 2 as const, todos: [] as TodoRecord[] }))
+]);
+export type TodoInput = z.infer<typeof todoInputSchema>;
+export type TodoRecord = z.infer<typeof todoRecordSchema>;
 export type CaseInput = z.infer<typeof caseInputSchema>;
 export type CaseRecord = z.infer<typeof caseRecordSchema>;
 export type Backup = z.infer<typeof backupSchema>;
 export type CaseEvent = z.infer<typeof eventSchema>;
 export interface AppState {
   cases: CaseRecord[];
+  todos: TodoRecord[];
+  reminderError: string;
   goal: number;
   dataPath: string;
   backupPath: string;
@@ -56,6 +76,13 @@ export interface Api {
   close(id: string, closedAt: string): Promise<Result<CaseRecord>>;
   reopen(id: string): Promise<Result<CaseRecord>>;
   remove(id: string): Promise<Result<void>>;
+  createTodo(input: TodoInput): Promise<Result<TodoRecord>>;
+  updateTodo(id: string, input: TodoInput): Promise<Result<TodoRecord>>;
+  completeTodo(id: string, completed: boolean): Promise<Result<TodoRecord>>;
+  removeTodo(id: string): Promise<Result<void>>;
+  onTodosChanged(listener: () => void): () => void;
+  onOpenTodos(listener: () => void): () => void;
+  quit(): Promise<Result<void>>;
   exportBackup(): Promise<Result<string | null>>;
   importBackup(): Promise<Result<boolean>>;
   exportCsv(): Promise<Result<string | null>>;

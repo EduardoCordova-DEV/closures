@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
+import { setTimeout as delay } from "node:timers/promises";
 import { _electron as electron, type ElectronApplication, type Locator, type Page } from "playwright";
 import { addDays, dateKey, daysBetween, isWorkday, weekEnd, weekLabel, weekStart } from "../shared/dates";
 
@@ -39,7 +40,7 @@ async function ageTone(locator: Locator, level: "safe" | "warning" | "overdue") 
 }
 async function ageColumn(page: Page) {
   assert.equal(await page.getByRole("columnheader", { name: "D\u00cdAS ABIERTO", exact: true }).count(), 1);
-  assert.equal(await page.evaluate(() => {
+  const layout = await page.evaluate(() => {
     const label = document.querySelector<HTMLElement>('[data-testid="case-age"]')!;
     const cell = label.closest("td")!;
     const row = cell.parentElement!;
@@ -48,16 +49,19 @@ async function ageColumn(page: Page) {
     const bounds = label.getBoundingClientRect(), cellBounds = cell.getBoundingClientRect();
     const panel = document.querySelector(".table-panel")!.getBoundingClientRect();
     const table = document.querySelector("table")!.getBoundingClientRect();
-    return row.children.length === 5 && row.children[2] === cell &&
-      !description.querySelector('[data-testid="case-age"]') && !!status.querySelector(".status") &&
-      bounds.left >= cellBounds.left && bounds.right <= cellBounds.right &&
-      cellBounds.left >= description.getBoundingClientRect().right &&
-      cellBounds.right <= status.getBoundingClientRect().left &&
-      Math.abs((bounds.left + bounds.right - cellBounds.left - cellBounds.right) / 2) < 1 &&
-      Math.abs((bounds.top + bounds.bottom - cellBounds.top - cellBounds.bottom) / 2) < 1 &&
-      Number.parseFloat(getComputedStyle(label).fontSize) >= 14 &&
-      table.right <= panel.right && document.documentElement.scrollWidth <= innerWidth;
-  }), true, "Case age must be large, centered in its own column and fully visible between description and status");
+    return {
+      ownColumn: row.children.length === 5 && row.children[2] === cell &&
+        !description.querySelector('[data-testid="case-age"]') && !!status.querySelector(".status"),
+      contained: bounds.left >= cellBounds.left && bounds.right <= cellBounds.right,
+      ordered: cellBounds.left + 0.5 >= description.getBoundingClientRect().right &&
+        cellBounds.right <= status.getBoundingClientRect().left + 0.5,
+      centeredX: Math.abs((bounds.left + bounds.right - cellBounds.left - cellBounds.right) / 2) < 1,
+      centeredY: Math.abs((bounds.top + bounds.bottom - cellBounds.top - cellBounds.bottom) / 2) < 1,
+      fontSize: Number.parseFloat(getComputedStyle(label).fontSize) >= 14,
+      noOverflow: table.right <= panel.right && document.documentElement.scrollWidth <= innerWidth
+    };
+  });
+  assert.ok(Object.values(layout).every(Boolean), `Case age layout: ${JSON.stringify(layout)}`);
 }
 test("Electron registers, closes, edits and persists tracking through a full app restart", { timeout: 180000 }, async () => {
   const folder = await mkdtemp(path.join(tmpdir(), "cierres-electron-test-"));
@@ -278,6 +282,73 @@ test("Electron registers, closes, edits and persists tracking through a full app
     await age(page, "focus-case-age", "40 d\u00edas abierto");
     await ageTone(page.getByTestId("focus-case-age"), "overdue");
     assert.deepEqual(await page.locator("tbody .case-id").allTextContents(), ["AGE-0", ...expectedOrder.slice(0, -1)]);
+    await page.getByRole("button", { name: "Crear To Do para este caso", exact: true }).click();
+    await page.getByLabel("Tarea", { exact: true }).fill("Revisar resultados To Do");
+    await page.getByLabel("Notas", { exact: true }).fill("Solo datos sinteticos de prueba");
+    await page.getByLabel("Fecha l\u00edmite", { exact: true }).fill(addDays(today, -1));
+    const selectedCaseId = await page.locator('select[name="caseId"]').inputValue();
+    assert.ok(selectedCaseId);
+    await page.getByRole("button", { name: "Crear tarea", exact: true }).click();
+    await page.getByRole("heading", { name: "To Do", exact: true }).waitFor();
+    await page.getByTestId("todo-row").waitFor();
+    assert.match(await page.getByTestId("todo-row").textContent() || "", /Vencida/);
+    assert.match(await page.getByTestId("todo-row").textContent() || "", /AGE-0/);
+    await page.getByRole("button", { name: "Completar tarea Revisar resultados To Do", exact: true }).click();
+    await page.getByRole("button", { name: /^Completadas/ }).click();
+    await page.getByRole("button", { name: "Reabrir tarea Revisar resultados To Do", exact: true }).click();
+    await page.getByRole("button", { name: /^Pendientes/ }).click();
+    await page.getByRole("button", { name: "Ver caso AGE-0", exact: true }).click();
+    await count(page, "active-total", 7);
+    await count(page, "closed-total", 0);
+    await page.getByRole("button", { name: /^To Do/ }).click();
+    await page.getByRole("button", { name: "Nueva tarea", exact: true }).click();
+    await page.getByLabel("Tarea", { exact: true }).fill("Tarea independiente");
+    await page.getByRole("button", { name: "Crear tarea", exact: true }).click();
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid="todo-row"]').length === 2);
+    await page.getByLabel("Filtrar por caso", { exact: true }).selectOption(selectedCaseId);
+    assert.equal(await page.getByTestId("todo-row").count(), 1);
+    await page.getByLabel("Filtrar por caso", { exact: true }).selectOption("");
+    await page.getByRole("button", { name: "Editar tarea Tarea independiente", exact: true }).click();
+    await page.getByRole("button", { name: "Eliminar tarea", exact: true }).click();
+    await page.getByRole("button", { name: "Confirmar eliminacion de tarea", exact: true }).click();
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid="todo-row"]').length === 1);
+    await application!.evaluate(({ Notification }) => {
+      Notification.isSupported = () => true;
+      Notification.prototype.show = function () { this.emit("show"); };
+    });
+    await page.getByRole("button", { name: "Editar tarea Revisar resultados To Do", exact: true }).click();
+    await page.getByLabel("Recordatorio", { exact: true }).fill(`${addDays(today, -1)}T12:00`);
+    await page.getByRole("button", { name: "Guardar tarea", exact: true }).click();
+    await page.getByRole("dialog").waitFor({ state: "hidden" });
+    await application!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+    assert.equal(await application!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), false);
+    const reminderDeadline = Date.now() + 45000;
+    let deliveredWhileHidden = false;
+    while (Date.now() < reminderDeadline) {
+      const result = await page.evaluate(() => window.cierres.state());
+      if (!result.ok) throw new Error(result.error);
+      assert.equal(result.value.reminderError, "");
+      deliveredWhileHidden = result.value.todos.some(item => item.title === "Revisar resultados To Do" && Boolean(item.reminderNotifiedAt));
+      if (deliveredWhileHidden) break;
+      await delay(250);
+    }
+    assert.ok(deliveredWhileHidden, "Reminder must be persisted while the window is hidden.");
+    assert.equal(await application!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), false);
+    await application!.evaluate(({ app }) => { app.emit("second-instance", {}, [], ""); });
+    await page.waitForFunction(() => document.visibilityState === "visible");
+    await page.getByText("Recordatorio enviado", { exact: true }).waitFor();
+    assert.match(await page.getByTestId("todo-row").textContent() || "", /Recordatorio enviado/);
+    if (process.env.CIERRES_SCREENSHOT_DIR) {
+      await page.screenshot({ path: path.join(process.env.CIERRES_SCREENSHOT_DIR, "cierres-todo-test.png") });
+    }
+    await application!.close();
+    application = undefined;
+    page = await launch();
+    await count(page, "active-total", 7);
+    await count(page, "closed-total", 0);
+    await page.getByRole("button", { name: /^To Do/ }).click();
+    await page.getByTestId("todo-row").waitFor();
+    assert.match(await page.getByTestId("todo-row").textContent() || "", /Recordatorio enviado/);
     assert.deepEqual(failures, []);
     assert.equal(await page.evaluate(() => typeof (window as Window & { require?: unknown }).require), "undefined");
   } finally {

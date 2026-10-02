@@ -1,13 +1,16 @@
-import { app, BrowserWindow, dialog, ipcMain, session, shell, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, powerMonitor, session, shell, Tray, type IpcMainInvokeEvent } from "electron";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { dateKey } from "../shared/dates";
-import { caseInputSchema, closeInputSchema, idSchema, isoDate, UserError, type Result } from "../shared/model";
+import { z } from "zod";
+import { caseInputSchema, closeInputSchema, idSchema, isoDate, todoInputSchema, UserError, type Result, type TodoRecord } from "../shared/model";
 import { csv, errorMessage, Store } from "./store";
 import { resolveDataFolder } from "./data-path";
+import { ReminderScheduler } from "./reminders";
 
 app.setName("Cierres");
+if (process.platform === "win32") app.setAppUserModelId("local.cierres.desktop");
 try {
   const folder = resolveDataFolder(app.getPath("appData"), app.isPackaged, process.env);
   mkdirSync(folder, { recursive: true });
@@ -23,6 +26,12 @@ const backupFolder = path.join(dataFolder, "backups");
 let window: BrowserWindow | null = null;
 let store: Store | undefined;
 let backupDay = "";
+let tray: Tray | undefined;
+let quitting = false;
+let scheduler: ReminderScheduler | undefined;
+let reminderTimer: ReturnType<typeof setInterval> | undefined;
+let reminderError = "";
+const notifications = new Set<Notification>();
 const isDev = !app.isPackaged && process.argv.includes("--dev");
 const logError = (error: unknown) => {
   const text = error instanceof Error ? error.stack || error.message : String(error);
@@ -41,6 +50,41 @@ function atomicWrite(file: string, content: string): void {
   writeFileSync(temporary, content, { encoding: "utf8", flag: "wx" });
   renameSync(temporary, file);
 }
+function showWindow(openTodos = false): void {
+  if (!window || window.isDestroyed()) return;
+  if (window.isMinimized()) window.restore();
+  window.show(); window.focus();
+  if (openTodos) window.webContents.send("todos:open");
+}
+function todosChanged(): void {
+  if (window && !window.isDestroyed()) window.webContents.send("todos:changed");
+}
+function deliverReminder(item: TodoRecord): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (!Notification.isSupported()) {
+      reject(new UserError("Windows no permite notificaciones en este entorno. Revisa tus tareas en To Do."));
+      return;
+    }
+    const notification = new Notification({
+      title: "Cierres - Recordatorio To Do", body: item.title,
+      icon: path.join(__dirname, "..", "assets", "icon.png")
+    });
+    notifications.add(notification);
+    const timeout = setTimeout(() => {
+      notification.close();
+      notifications.delete(notification);
+      reject(new Error("Windows no confirmo la notificacion. Revisa los permisos de notificaciones."));
+    }, 15000);
+    notification.once("show", () => { clearTimeout(timeout); resolve(); });
+    notification.once("failed", (_event, message) => {
+      clearTimeout(timeout); notifications.delete(notification);
+      reject(new Error(`No se pudo mostrar el recordatorio: ${message}`));
+    });
+    notification.once("click", () => { showWindow(true); notifications.delete(notification); });
+    notification.once("close", () => { notifications.delete(notification); });
+    notification.show();
+  });
+}
 function handle(channel: string, operation: (...args: unknown[]) => unknown): void {
   ipcMain.handle(channel, async (event: IpcMainInvokeEvent, ...args: unknown[]): Promise<Result<unknown>> => {
     try {
@@ -56,7 +100,8 @@ function handle(channel: string, operation: (...args: unknown[]) => unknown): vo
 }
 function registerApi(): void {
   handle("tracking:state", () => ({
-    cases: store!.list(), goal: 5, dataPath: path.join(dataFolder, "tracking.sqlite"),
+    cases: store!.list(), todos: store!.listTodos(), reminderError,
+    goal: 5, dataPath: path.join(dataFolder, "tracking.sqlite"),
     backupPath: backupFolder, version: app.getVersion()
   }));
   handle("tracking:create", input => store!.create(caseInputSchema.parse(input)));
@@ -68,6 +113,11 @@ function registerApi(): void {
   });
   handle("tracking:reopen", id => store!.reopen(idSchema.parse(id)));
   handle("tracking:remove", id => store!.remove(idSchema.parse(id)));
+  handle("todos:create", input => store!.createTodo(todoInputSchema.parse(input)));
+  handle("todos:update", (id, input) => store!.updateTodo(idSchema.parse(id), todoInputSchema.parse(input)));
+  handle("todos:complete", (id, completed) => store!.completeTodo(idSchema.parse(id), z.boolean().parse(completed)));
+  handle("todos:remove", id => store!.removeTodo(idSchema.parse(id)));
+  handle("app:quit", () => { setImmediate(() => app.quit()); });
   handle("tracking:folder", async () => {
     const error = await shell.openPath(dataFolder);
     if (error) throw new UserError(`No se pudo abrir la carpeta: ${error}`);
@@ -107,8 +157,8 @@ function registerApi(): void {
     const backup = store!.validateBackup(parsed);
     const confirmation = await dialog.showMessageBox(window!, {
       type: "warning", title: "Reemplazar tracking local",
-      message: `Restaurar ${backup.cases.filter(item => !item.deletedAt).length} casos del respaldo?`,
-      detail: "Esto reemplaza el tracking actual, no lo combina. Antes se guardara una copia de seguridad de la base actual en la carpeta backups.",
+      message: `Restaurar ${backup.cases.filter(item => !item.deletedAt).length} casos y ${backup.todos.filter(item => !item.deletedAt).length} tareas del respaldo?`,
+      detail: "Esto reemplaza TODOS los casos y tareas actuales, no los combina. Un respaldo antiguo sin tareas elimina las tareas actuales. Antes se guardara una copia de seguridad en la carpeta backups.",
       buttons: ["Cancelar", "Restaurar respaldo"], defaultId: 0, cancelId: 0, noLink: true
     });
     if (confirmation.response !== 1) return false;
@@ -120,10 +170,7 @@ function registerApi(): void {
 
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
-  app.on("second-instance", () => {
-    if (window?.isMinimized()) window.restore();
-    window?.show(); window?.focus();
-  });
+  app.on("second-instance", () => showWindow());
   app.whenReady().then(async () => {
     store = new Store(path.join(dataFolder, "tracking.sqlite"));
     backupToday();
@@ -142,6 +189,18 @@ else {
       }
     });
     window.removeMenu();
+    tray = new Tray(path.join(__dirname, "..", "assets", "icon.ico"));
+    tray.setToolTip("Cierres - To Do y recordatorios activos");
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: "Abrir Cierres", click: () => showWindow() },
+      { label: "Abrir To Do", click: () => showWindow(true) },
+      { type: "separator" },
+      { label: "Salir (detener recordatorios)", click: () => app.quit() }
+    ]));
+    tray.on("double-click", () => showWindow());
+    window.on("close", event => {
+      if (!quitting) { event.preventDefault(); window?.hide(); }
+    });
     window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     window.webContents.on("will-navigate", event => event.preventDefault());
     window.webContents.on("will-attach-webview", event => event.preventDefault());
@@ -158,11 +217,27 @@ else {
       await window.loadFile(index);
     }
     window.show();
+    scheduler = new ReminderScheduler(store, deliverReminder, backupToday,
+      () => { reminderError = ""; todosChanged(); },
+      error => {
+        logError(error);
+        reminderError = "No se pudo entregar un recordatorio. Revisa las notificaciones de Windows; se reintentara en 5 minutos. Puedes ver las tareas en To Do.";
+        todosChanged();
+      });
+    reminderTimer = setInterval(() => { void scheduler?.check(); }, 15000);
+    powerMonitor.on("resume", () => { void scheduler?.check(); });
+    void scheduler.check();
   }).catch(error => {
     logError(error);
     dialog.showErrorBox("No se pudo iniciar Cierres", `${errorMessage(error)}\n\nDatos: ${dataFolder}`);
     app.quit();
   });
-  app.on("window-all-closed", () => app.quit());
-  app.on("will-quit", () => store?.dispose());
+  app.on("before-quit", () => { quitting = true; scheduler?.stop(); });
+  app.on("window-all-closed", () => { if (quitting) app.quit(); });
+  app.on("will-quit", () => {
+    if (reminderTimer) clearInterval(reminderTimer);
+    for (const notification of notifications) notification.close();
+    tray?.destroy();
+    store?.dispose();
+  });
 }

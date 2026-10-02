@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { addDays, dateKey, daysBetween, formatDate, inWeek, isWorkday, weekEnd, weekLabel, weekStart } from "../shared/dates";
-import type { AppState, CaseInput, CaseRecord, Result } from "../shared/model";
+import type { AppState, CaseInput, CaseRecord, Result, TodoInput, TodoRecord } from "../shared/model";
 import { Icon } from "./Icon";
+import { TodoForm, TodoList } from "./Todos";
 
 type ModalState = { kind: "register" } | { kind: "edit"; item: CaseRecord } | { kind: "close" } |
-  { kind: "delete" | "reopen"; item: CaseRecord } | { kind: "storage" } | null;
+  { kind: "delete" | "reopen"; item: CaseRecord } | { kind: "storage" } |
+  { kind: "todo"; item?: TodoRecord; caseId?: string } | { kind: "delete-todo"; item: TodoRecord } | null;
 async function unwrap<T>(promise: Promise<Result<T>>): Promise<T> {
   const result = await promise;
   if (!result.ok) throw new Error(result.error);
@@ -91,6 +93,7 @@ export function App() {
   const [today, setToday] = useState(dateKey());
   const [week, setWeek] = useState(weekStart());
   const [tab, setTab] = useState<"active" | "closed">("active");
+  const [section, setSection] = useState<"cases" | "todos">("cases");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [modal, setModal] = useState<ModalState>(null);
@@ -99,6 +102,11 @@ export function App() {
   const [toast, setToast] = useState("");
   const reload = useCallback(async () => setState(await unwrap(window.cierres.state())), []);
   useEffect(() => { void reload().catch(problem => setError(String(problem.message || problem))); }, [reload]);
+  useEffect(() => {
+    const unsubscribeChanged = window.cierres.onTodosChanged(() => { void reload().catch(problem => setError(String(problem.message || problem))); });
+    const unsubscribeOpen = window.cierres.onOpenTodos(() => setSection("todos"));
+    return () => { unsubscribeChanged(); unsubscribeOpen(); };
+  }, [reload]);
   useEffect(() => {
     let previous = dateKey();
     const updateDate = () => {
@@ -136,12 +144,20 @@ export function App() {
   const normalized = query.trim().toLocaleLowerCase("es");
   const filtered = source.filter(item => `${item.number} ${item.title} ${item.product}`.toLocaleLowerCase("es").includes(normalized));
   const missing = Math.max(0, state.goal - closed.length);
-  const changeTab = (value: "active" | "closed") => { setTab(value); setQuery(""); };
+  const changeTab = (value: "active" | "closed") => { setSection("cases"); setTab(value); setQuery(""); };
+  const saveTodo = (input: TodoInput) => void run(async () => {
+    if (modal?.kind !== "todo") return;
+    if (modal.item) await unwrap(window.cierres.updateTodo(modal.item.id, input));
+    else await unwrap(window.cierres.createTodo(input));
+    setModal(null); setSection("todos");
+    await reload(); setToast("Tarea guardada.");
+  });
   const save = (input: CaseInput, closedAt: string | null) => void run(async () => {
     const item = modal?.kind === "edit"
       ? await unwrap(window.cierres.update(modal.item.id, input, closedAt))
       : await unwrap(window.cierres.create(input));
     setModal(null);
+    setSection("cases");
     setSelectedId(item.id); setQuery("");
     if (item.status === "closed") { setWeek(weekStart(item.closedAt!)); setTab("closed"); }
     else setTab("active");
@@ -154,18 +170,28 @@ export function App() {
       <aside className="sidebar">
         <div className="brand"><span className="brand-icon"><Icon name="check" /></span>cierres<span className="brand-dot">.</span></div>
         <div className="eyebrow side-heading">Mi espacio</div>
-        <button className={`side-nav ${tab === "active" ? "active" : ""}`} onClick={() => changeTab("active")}><Icon name="grid" />Mis casos<span className="nav-count">{active.length}</span></button>
-        <button className={`side-nav ${tab === "closed" ? "active" : ""}`} onClick={() => changeTab("closed")}><Icon name="archive" />Cerrados<span className="nav-count">{closed.length}</span></button>
+        <button className={`side-nav ${section === "cases" && tab === "active" ? "active" : ""}`} onClick={() => changeTab("active")}><Icon name="grid" />Mis casos<span className="nav-count">{active.length}</span></button>
+        <button className={`side-nav ${section === "cases" && tab === "closed" ? "active" : ""}`} onClick={() => changeTab("closed")}><Icon name="archive" />Cerrados<span className="nav-count">{closed.length}</span></button>
+        <button className={`side-nav ${section === "todos" ? "active" : ""}`} onClick={() => setSection("todos")}><Icon name="check" />To Do<span className="nav-count">{state.todos.filter(item => !item.completedAt).length}</span></button>
         <div className="side-legend"><strong>Tu flujo de trabajo</strong>Registra tus casos actuales.<br />Ci&eacute;rralos cuando termines.<br />Tu semana se actualiza sola.</div>
         <div className="side-bottom">
           <button className="side-nav" onClick={() => show({ kind: "storage" })}><Icon name="shield" />Datos y respaldos</button>
+          <button className="side-nav" onClick={() => void run(async () => { await unwrap(window.cierres.quit()); })}><Icon name="x" />Salir de Cierres</button>
           <div className="local"><span className="dot" />Guardado local &middot; sin nube</div>
           <div className="profile"><span className="avatar">YO</span><div><strong>Mi espacio personal</strong><small>Meta: {state.goal} cierres / semana</small></div></div>
         </div>
       </aside>
       <main>
-        <header className="page-head"><div><div className="eyebrow">MI TRACKER PERSONAL</div><h1>Tus casos, bajo control.</h1><p>Lo que tienes en marcha y lo que ya lograste, en un solo lugar.</p></div><button className="button" onClick={() => show({ kind: "register" })}><Icon name="plus" />Registrar caso</button></header>
+        <header className="page-head"><div><div className="eyebrow">MI TRACKER PERSONAL</div><h1>{section === "todos" ? "To Do" : "Tus casos, bajo control."}</h1><p>{section === "todos" ? "Tareas, fechas y recordatorios conectados con tus casos." : "Lo que tienes en marcha y lo que ya lograste, en un solo lugar."}</p></div><button className="button" onClick={() => show(section === "todos" ? { kind: "todo" } : { kind: "register" })}><Icon name="plus" />{section === "todos" ? "Nueva tarea" : "Registrar caso"}</button></header>
         {error && !modal && <div className="error-banner" role="alert">{error}<button aria-label="Cerrar aviso" onClick={() => setError("")}><Icon name="x" /></button></div>}
+        {state.reminderError && <div className="error-banner" role="alert">{state.reminderError}</div>}
+        {section === "todos" ? <>
+          <p className="todo-guidance"><Icon name="bell" />Al cerrar la ventana, Cierres sigue en la bandeja del sistema para recordarte tus tareas. Usa &ldquo;Salir de Cierres&rdquo; para detenerlo.</p>
+          <TodoList todos={state.todos} cases={state.cases} today={today} busy={busy}
+            onEdit={item => show({ kind: "todo", item })}
+            onComplete={item => void run(async () => { await unwrap(window.cierres.completeTodo(item.id, !item.completedAt)); await reload(); setToast(item.completedAt ? "Tarea reabierta." : "Tarea completada. El caso no se ha cerrado."); })}
+            onOpenCase={item => { setSection("cases"); setQuery(""); setSelectedId(item.id); setTab(item.status === "closed" ? "closed" : "active"); if (item.closedAt) setWeek(weekStart(item.closedAt)); }} />
+        </> : <>
         <div className="weekbar"><span>Meta semanal</span><button className="icon-button" aria-label="Semana anterior" onClick={() => setWeek(addDays(week, -7))}><Icon name="left" size={13} /></button><strong>{weekLabel(week)}</strong><button className="icon-button" aria-label="Semana siguiente" disabled={week >= weekStart(today)} onClick={() => setWeek(addDays(week, 7))}><Icon name="right" size={13} /></button>{week !== weekStart(today) && <button className="link-button" onClick={() => setWeek(weekStart(today))}>Ir a hoy</button>}<span className="week-tag">{week === weekStart(today) && today <= weekEnd(week) ? "Semana actual" : "Semana finalizada"}</span></div>
         <section className="metrics">
           <div className="metric"><div className="metric-label">Mis casos activos<Icon name="grid" /></div><div className="metric-value" data-testid="active-total">{active.length}</div><small>Carga actual &middot; todas las fechas</small></div>
@@ -190,16 +216,20 @@ export function App() {
           <aside className="focus-panel"><div className="eyebrow">Tu acci&oacute;n principal</div><div className="focus-check"><Icon name="circle" size={23} /></div><h2>Tu siguiente cierre<br />empieza aqu&iacute;.</h2>
             {selected ? <div className="focus-case"><span className="focus-id">{selected.number}</span><p>{selected.title}</p><div className="focus-meta">{selected.product}<br />Abierto el {formatDate(selected.openedAt)} &middot; {statusLabels[selected.status]}<CaseAge item={selected} today={today} testId="focus-case-age" /><span>Incluye s&aacute;bados y domingos.</span></div></div> : <div className="focus-case"><p>Un lugar para todos tus casos.</p><div className="focus-meta">Registra un caso actual para habilitar el cierre.</div></div>}
             <button className="button primary close-primary" disabled={!active.length || busy} onClick={() => show({ kind: "close" })}><Icon name="circle" size={21} />Cerrar Caso</button><p className="focus-help">T&uacute; confirmas el caso y la fecha.<br />No se cierra nada con un solo clic.</p>
+            {selected && <button className="link-button todo-case-action" onClick={() => show({ kind: "todo", caseId: selected.id })}>Crear To Do para este caso</button>}
           </aside>
         </div>
         <p className="below-table"><Icon name="shield" />Registrar agrega un caso a Activos. Solo confirmar el cierre suma a tu meta semanal.</p>
-        <footer className="app-footer"><span>Lunes a viernes &middot; fechas de tu equipo &middot; cada caso cuenta una vez</span><span>{formatDate(today, true)} &middot; v{state.version}</span></footer>
+        </>}
+        <footer className="app-footer"><span>{section === "todos" ? "Tareas locales \u00b7 fechas y recordatorios todos los dias" : "Lunes a viernes \u00b7 fechas de tu equipo \u00b7 cada caso cuenta una vez"}</span><span>{formatDate(today, true)} &middot; v{state.version}</span></footer>
       </main>
     </div>
     {modal && <Modal busy={busy} onClose={dismiss}
-      title={modal.kind === "register" ? "Registra tu caso actual." : modal.kind === "edit" ? "Editar caso" : modal.kind === "close" ? "Un caso menos. Un logro mas." : modal.kind === "storage" ? "Tus datos, en tu equipo." : modal.kind === "reopen" ? "Reabrir este caso?" : "Eliminar este caso?"}
+      title={modal.kind === "todo" ? modal.item ? "Editar tarea" : "Nueva tarea" : modal.kind === "delete-todo" ? "Eliminar esta tarea?" : modal.kind === "register" ? "Registra tu caso actual." : modal.kind === "edit" ? "Editar caso" : modal.kind === "close" ? "Un caso menos. Un logro mas." : modal.kind === "storage" ? "Tus datos, en tu equipo." : modal.kind === "reopen" ? "Reabrir este caso?" : "Eliminar este caso?"}
       subtitle={modal.kind === "register" ? "Aparecera en Activos. Registrarlo no suma un cierre a tu meta semanal." : modal.kind === "close" ? "Revisa el caso y la fecha antes de confirmar. El cambio se guarda inmediatamente." : undefined}>
       {error && <div className="error-banner" role="alert">{error}</div>}
+      {modal.kind === "todo" && <TodoForm item={modal.item} caseId={modal.caseId} cases={state.cases} busy={busy} onSave={saveTodo} onCancel={dismiss} onDelete={() => { if (modal.item) show({ kind: "delete-todo", item: modal.item }); }} />}
+      {modal.kind === "delete-todo" && <><p className="dialog-intro">Se eliminar&aacute; &ldquo;{modal.item.title}&rdquo; y se desactivar&aacute; su recordatorio. El caso relacionado no cambia.</p><div className="dialog-actions"><button className="button quiet" disabled={busy} onClick={dismiss}>Cancelar</button><button className="button" disabled={busy} onClick={() => void run(async () => { await unwrap(window.cierres.removeTodo(modal.item.id)); setModal(null); await reload(); setToast("Tarea eliminada."); })}>Confirmar eliminacion de tarea</button></div></>}
       {(modal.kind === "register" || modal.kind === "edit") && <CaseForm item={modal.kind === "edit" ? modal.item : undefined} busy={busy} onSave={save} onCancel={dismiss}
         onDelete={() => modal.kind === "edit" && show({ kind: "delete", item: modal.item })}
         onReopen={() => modal.kind === "edit" && show({ kind: "reopen", item: modal.item })} />}

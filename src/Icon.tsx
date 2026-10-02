@@ -13,6 +13,7 @@ const paths = {
   edit: <><path d="m12 3 5 5-9 9H3v-5ZM10 5l5 5" /></>,
   x: <path d="m5 5 10 10M5 15 15 5" />,
   clock: <><circle cx="10" cy="10" r="7" /><path d="M10 6v4l3 2" /></>,
+  bell: <><path d="M4 14h12l-2-3V7a4 4 0 0 0-8 0v4ZM8 17h4" /></>,
   shield: <><path d="m10 2 7 3v5c0 4-7 8-7 8S3 14 3 10V5Z" /><path d="m6 10 3 3 5-6" /></>
 };
 export function Icon({ name, size = 18 }: { name: keyof typeof paths; size?: number }) {

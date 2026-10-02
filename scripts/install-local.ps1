@@ -1,5 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $source = Join-Path (Split-Path $PSScriptRoot -Parent) 'release\win-unpacked'
+$package = Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'package.json') -Raw | ConvertFrom-Json
 $destination = Join-Path $env:LOCALAPPDATA 'Programs\Cierres'
 $marker = Join-Path $destination '.cierres-install.json'
 if (-not (Test-Path -LiteralPath (Join-Path $source 'Cierres.exe'))) {
@@ -11,7 +12,7 @@ if ((Test-Path -LiteralPath $destination) -and -not (Test-Path -LiteralPath $mar
 $running = Get-CimInstance Win32_Process -Filter "Name='Cierres.exe'" |
     Where-Object { $_.ExecutablePath -eq (Join-Path $destination 'Cierres.exe') }
 if ($running) {
-    throw 'Cierra Cierres antes de actualizar la aplicacion. Los datos se conservaran.'
+    throw 'Guarda los formularios y usa Salir de Cierres (tambien desde la bandeja) antes de actualizar. Cerrar la ventana no termina la app. Los datos se conservaran.'
 }
 New-Item -ItemType Directory -Path $destination -Force | Out-Null
 Get-ChildItem -LiteralPath $source -Force | ForEach-Object {
@@ -32,7 +33,7 @@ $launcher | Set-Content -LiteralPath (Join-Path $bin 'closures.cmd') -Encoding A
 if (Test-Path -LiteralPath $legacyLauncher) {
     Remove-Item -LiteralPath $legacyLauncher -Force
 }
-@{ name = 'Cierres'; version = '1.0.0'; installedAt = (Get-Date).ToString('o') } |
+@{ name = 'Cierres'; version = $package.version; installedAt = (Get-Date).ToString('o') } |
     ConvertTo-Json | Set-Content -LiteralPath $marker -Encoding UTF8
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $entries = @($userPath -split ';' | Where-Object { $_ })

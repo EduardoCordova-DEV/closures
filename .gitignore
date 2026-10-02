@@ -1,7 +1,16 @@
+# Dependencias y compilaciones locales.
 node_modules/
 dist/
 dist-electron/
+
+# GitHub Releases permite adjuntar estos archivos aunque Git los ignore.
+# No quitar estas reglas: los EXE superan el limite de 100 MiB por archivo en Git.
+# Publicar EXE y SHA256SUMS.txt con gh release create/upload (ver README).
 release/
+*.exe
+*.zip
+
+# Datos privados, respaldos y diagnosticos: nunca publicar.
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
@@ -14,12 +23,14 @@ cierres-*.csv
 *.db-wal
 *.db-shm
 *.dmp
-*.exe
-*.zip
+
+# Credenciales y configuracion local.
 .env
 .env.*
 !.env.example
 *.pem
 *.key
+
+# Archivos del sistema operativo.
 .DS_Store
 Thumbs.db

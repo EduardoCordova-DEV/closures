@@ -5,8 +5,8 @@ import path from "node:path";
 import { z } from "zod";
 import { dateKey, isDate, isWorkday } from "../shared/dates";
 import {
-  backupSchema, caseInputSchema, caseRecordSchema, UserError,
-  type Backup, type CaseEvent, type CaseInput, type CaseRecord
+  backupSchema, caseInputSchema, caseRecordSchema, todoInputSchema, todoRecordSchema, UserError,
+  type Backup, type CaseEvent, type CaseInput, type CaseRecord, type TodoInput, type TodoRecord
 } from "../shared/model";
 
 export class Store {
@@ -19,16 +19,20 @@ export class Store {
       const check = this.db.prepare("PRAGMA quick_check").get();
       if (check?.quick_check !== "ok") throw new UserError("La base de datos requiere recuperacion. No se reemplazo ningun dato.");
       const version = Number(this.db.prepare("PRAGMA user_version").get()?.user_version);
-      if (version > 1) throw new UserError("Esta base pertenece a una version mas reciente de Cierres.");
-      this.db.exec(`
+      if (version > 2) throw new UserError("Esta base pertenece a una version mas reciente de Cierres.");
+      if (version === 1) this.snapshot(path.join(path.dirname(file), "backups"), `before-v2-${Date.now()}-${randomUUID()}`);
+      this.transaction(() => this.db.exec(`
         CREATE TABLE IF NOT EXISTS cases (
           id TEXT PRIMARY KEY, case_key TEXT NOT NULL UNIQUE, record TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS events (
           id TEXT PRIMARY KEY, case_id TEXT NOT NULL REFERENCES cases(id), record TEXT NOT NULL
         );
-        PRAGMA user_version=1;
-      `);
+        CREATE TABLE IF NOT EXISTS todos (
+          id TEXT PRIMARY KEY, record TEXT NOT NULL
+        );
+        PRAGMA user_version=2;
+      `));
     } catch (error) {
       this.db.close();
       throw error;
@@ -110,9 +114,73 @@ export class Store {
     const now = new Date().toISOString();
     this.save({ ...this.get(id), deletedAt: now, updatedAt: now }, "deleted");
   }
+  private allTodos(): TodoRecord[] {
+    return this.db.prepare("SELECT record FROM todos ORDER BY rowid DESC").all()
+      .map(row => todoRecordSchema.parse(JSON.parse(String(row.record))));
+  }
+  listTodos(): TodoRecord[] { return this.allTodos().filter(item => !item.deletedAt); }
+  private getTodo(id: string): TodoRecord {
+    const row = this.db.prepare("SELECT record FROM todos WHERE id=?").get(id);
+    if (!row) throw new UserError("La tarea ya no existe.");
+    const item = todoRecordSchema.parse(JSON.parse(String(row.record)));
+    if (item.deletedAt) throw new UserError("La tarea fue eliminada.");
+    return item;
+  }
+  private saveTodo(item: TodoRecord): TodoRecord {
+    todoRecordSchema.parse(item);
+    return this.transaction(() => {
+      this.db.prepare("INSERT INTO todos(id,record) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record")
+        .run(item.id, JSON.stringify(item));
+      return item;
+    });
+  }
+  createTodo(input: TodoInput): TodoRecord {
+    const clean = todoInputSchema.parse(input);
+    if (clean.caseId) this.get(clean.caseId);
+    const now = new Date().toISOString();
+    return this.saveTodo({
+      ...clean, id: randomUUID(), createdAt: now, updatedAt: now,
+      completedAt: null, deletedAt: null, reminderNotifiedAt: null
+    });
+  }
+  updateTodo(id: string, input: TodoInput): TodoRecord {
+    const previous = this.getTodo(id), clean = todoInputSchema.parse(input);
+    if (clean.caseId && clean.caseId !== previous.caseId) this.get(clean.caseId);
+    return this.saveTodo({
+      ...previous, ...clean, updatedAt: new Date().toISOString(),
+      reminderNotifiedAt: previous.reminderAt === clean.reminderAt ? previous.reminderNotifiedAt : null
+    });
+  }
+  completeTodo(id: string, completed: boolean): TodoRecord {
+    const previous = this.getTodo(id), now = new Date().toISOString();
+    return this.saveTodo({ ...previous, completedAt: completed ? previous.completedAt || now : null, updatedAt: now });
+  }
+  removeTodo(id: string): void {
+    const now = new Date().toISOString();
+    this.saveTodo({ ...this.getTodo(id), deletedAt: now, updatedAt: now });
+  }
+  dueReminders(now = new Date()): TodoRecord[] {
+    return this.listTodos().filter(item => !item.completedAt && item.reminderAt &&
+      !item.reminderNotifiedAt && Date.parse(item.reminderAt) <= now.getTime())
+      .sort((a, b) => Date.parse(a.reminderAt!) - Date.parse(b.reminderAt!));
+  }
+  pendingReminder(id: string, reminderAt: string, now: Date): TodoRecord | null {
+    const row = this.db.prepare("SELECT record FROM todos WHERE id=?").get(id);
+    if (!row) return null;
+    const item = todoRecordSchema.parse(JSON.parse(String(row.record)));
+    return !item.deletedAt && !item.completedAt && !item.reminderNotifiedAt &&
+      item.reminderAt === reminderAt && Date.parse(reminderAt) <= now.getTime() ? item : null;
+  }
+  markReminderNotified(id: string, reminderAt: string, now = new Date()): void {
+    const row = this.db.prepare("SELECT record FROM todos WHERE id=?").get(id);
+    if (!row) return; // A restore may have removed the task while Windows displayed its notification.
+    const item = todoRecordSchema.parse(JSON.parse(String(row.record)));
+    if (item.deletedAt || item.completedAt || item.reminderAt !== reminderAt || item.reminderNotifiedAt) return;
+    this.saveTodo({ ...item, reminderNotifiedAt: now.toISOString() });
+  }
   backup(): Backup {
     return backupSchema.parse({
-      schemaVersion: 1, exportedAt: new Date().toISOString(), cases: this.all(),
+      schemaVersion: 2, exportedAt: new Date().toISOString(), cases: this.all(), todos: this.allTodos(),
       events: this.db.prepare("SELECT record FROM events ORDER BY rowid").all().map(row => JSON.parse(String(row.record)))
     });
   }
@@ -129,16 +197,24 @@ export class Store {
         throw new UserError("El historial del respaldo es inconsistente.");
       events.add(event.id);
     }
+    const todoIds = new Set<string>();
+    for (const item of backup.todos) {
+      if (todoIds.has(item.id) || (item.caseId && !ids.has(item.caseId)))
+        throw new UserError("El respaldo contiene tareas duplicadas o vinculadas a casos inexistentes.");
+      todoIds.add(item.id);
+    }
     return backup;
   }
   restore(input: unknown): void {
     const backup = this.validateBackup(input);
     this.transaction(() => {
-      this.db.exec("DELETE FROM events; DELETE FROM cases;");
+      this.db.exec("DELETE FROM todos; DELETE FROM events; DELETE FROM cases;");
       const insert = this.db.prepare("INSERT INTO cases(id,case_key,record) VALUES(?,?,?)");
       for (const item of backup.cases) insert.run(item.id, this.key(item.number), JSON.stringify(item));
       const insertEvent = this.db.prepare("INSERT INTO events(id,case_id,record) VALUES(?,?,?)");
       for (const item of backup.events) insertEvent.run(item.id, item.caseId, JSON.stringify(item));
+      const insertTodo = this.db.prepare("INSERT INTO todos(id,record) VALUES(?,?)");
+      for (const item of backup.todos) insertTodo.run(item.id, JSON.stringify(item));
     });
   }
   snapshot(folder: string, label = dateKey()): string {
