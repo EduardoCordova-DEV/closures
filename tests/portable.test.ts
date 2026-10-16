@@ -92,6 +92,7 @@ test("portable EXE starts empty and keeps its cases and To Do when moved to anot
     assert.equal(first.state.todos.length, 0);
     await first.page.getByRole("button", { name: "Registrar caso", exact: true }).click();
     await first.page.getByLabel("ID del caso", { exact: true }).fill("PORTABLE-TEST-ONLY");
+    await first.page.getByLabel("Nombre del cliente", { exact: true }).fill("Cliente portable sintetico");
     await first.page.locator('input[name="title"]').fill("Datos sinteticos para validar portabilidad");
     await first.page.getByRole("dialog").getByRole("button", { name: "Registrar caso", exact: true }).click();
     await first.page.waitForFunction(() => document.querySelector('[data-testid="active-total"]')?.textContent === "1");
@@ -126,10 +127,12 @@ test("portable EXE starts empty and keeps its cases and To Do when moved to anot
     const second = await launch();
     assert.equal(second.state.cases.length, 1);
     assert.equal(second.state.cases[0].number, "PORTABLE-TEST-ONLY");
+    assert.equal(second.state.cases[0].customerName, "Cliente portable sintetico");
     assert.equal(second.state.todos.length, 1);
     assert.equal(second.state.todos[0].caseId, second.state.cases[0].id);
     if (nativeNotifications) assert.ok(second.state.todos[0].reminderNotifiedAt);
     await second.page.getByText("PORTABLE-TEST-ONLY", { exact: true }).first().waitFor();
+    assert.equal(await second.page.getByTestId("case-customer").textContent(), "Cliente portable sintetico");
     assert.deepEqual(failures, []);
   } catch (error) {
     console.error("Portable test failed:", error);

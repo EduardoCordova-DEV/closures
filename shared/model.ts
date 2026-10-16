@@ -2,9 +2,11 @@ import { z } from "zod";
 import { dateKey, isDate } from "./dates";
 
 export const isoDate = z.string().refine(isDate, "La fecha no es valida.");
+const customerNameSchema = z.string().trim().max(160, "El nombre del cliente no puede superar 160 caracteres.").default("");
 export const caseInputSchema = z.object({
   number: z.string().trim().min(1, "Escribe el ID del caso.").max(80),
   title: z.string().trim().min(1, "Escribe una descripcion.").max(240),
+  customerName: customerNameSchema,
   product: z.enum(["PostgreSQL", "MySQL", "Otro"]),
   status: z.enum(["work", "waiting"]),
   openedAt: isoDate
@@ -17,6 +19,7 @@ export const caseRecordSchema = z.object({
   id: z.uuid(),
   number: z.string().trim().min(1).max(80),
   title: z.string().trim().min(1).max(240),
+  customerName: customerNameSchema,
   product: z.enum(["PostgreSQL", "MySQL", "Otro"]),
   status: z.enum(["work", "waiting", "closed"]),
   openedAt: isoDate,
@@ -55,7 +58,7 @@ export const backupSchema = z.union([
 ]);
 export type TodoInput = z.infer<typeof todoInputSchema>;
 export type TodoRecord = z.infer<typeof todoRecordSchema>;
-export type CaseInput = z.infer<typeof caseInputSchema>;
+export type CaseInput = z.input<typeof caseInputSchema>;
 export type CaseRecord = z.infer<typeof caseRecordSchema>;
 export type Backup = z.infer<typeof backupSchema>;
 export type CaseEvent = z.infer<typeof eventSchema>;

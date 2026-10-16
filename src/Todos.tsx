@@ -45,7 +45,7 @@ export function TodoForm({ item, caseId, cases, busy, onSave, onCancel, onDelete
       <label>Caso relacionado<select name="caseId" aria-label="Caso relacionado" defaultValue={item?.caseId || caseId || ""}>
         <option value="">Sin caso relacionado</option>
         {missingCaseId && <option value={missingCaseId}>Caso eliminado (v&iacute;nculo conservado)</option>}
-        {cases.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.number} - {candidate.title}{candidate.status === "closed" ? " (cerrado)" : ""}</option>)}
+        {cases.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.number} - {candidate.title}{candidate.customerName && ` - ${candidate.customerName}`}{candidate.status === "closed" ? " (cerrado)" : ""}</option>)}
       </select></label>
       <div className="dialog-actions"><button className="button quiet" type="button" onClick={onCancel}>Cancelar</button><button className="button primary" type="submit">{busy ? "Guardando..." : item ? "Guardar tarea" : "Crear tarea"}</button></div>
       {item && <div className="danger-actions"><button className="link-button danger" type="button" onClick={onDelete}>Eliminar tarea</button></div>}
@@ -66,18 +66,18 @@ export function TodoList({ todos, cases, today, busy, onEdit, onComplete, onOpen
   const filtered = source.filter(item => {
     const related = cases.find(candidate => candidate.id === item.caseId);
     return (!caseFilter || item.caseId === caseFilter) &&
-      `${item.title} ${item.notes} ${related?.number || ""} ${related?.title || ""}`.toLocaleLowerCase("es").includes(normalized);
+      `${item.title} ${item.notes} ${related?.number || ""} ${related?.title || ""} ${related?.customerName || ""}`.toLocaleLowerCase("es").includes(normalized);
   }).sort((a, b) => completed ? b.completedAt!.localeCompare(a.completedAt!)
     : (a.dueDate || "9999-12-31").localeCompare(b.dueDate || "9999-12-31") ||
       (a.reminderAt || "\uffff").localeCompare(b.reminderAt || "\uffff") || a.createdAt.localeCompare(b.createdAt));
   return <section className="table-panel todo-panel" aria-label="Lista de To Do">
     <div className="table-tools">
       <div className="tabs"><button aria-pressed={!completed} onClick={() => setCompleted(false)}>Pendientes <span>{pending.length}</span></button><button aria-pressed={completed} onClick={() => setCompleted(true)}>Completadas <span>{todos.length - pending.length}</span></button></div>
-      <label className="search-box"><Icon name="search" size={15} /><input type="search" aria-label="Buscar tareas" placeholder="Buscar tarea o caso" value={query} onChange={event => setQuery(event.target.value)} /></label>
+      <label className="search-box"><Icon name="search" size={15} /><input type="search" aria-label="Buscar tareas" placeholder="Buscar tarea, caso o cliente" value={query} onChange={event => setQuery(event.target.value)} /></label>
     </div>
     <label className="todo-filter">Filtrar por caso<select aria-label="Filtrar por caso" value={caseFilter} onChange={event => setCaseFilter(event.target.value)}>
       <option value="">Todos los casos</option>
-      {cases.map(item => <option key={item.id} value={item.id}>{item.number}</option>)}
+      {cases.map(item => <option key={item.id} value={item.id}>{item.number}{item.customerName && ` - ${item.customerName}`}</option>)}
     </select></label>
     {filtered.length ? <ul className="todo-list">{filtered.map(item => {
       const related = cases.find(candidate => candidate.id === item.caseId);
@@ -92,6 +92,7 @@ export function TodoList({ todos, cases, today, busy, onEdit, onComplete, onOpen
             {item.dueDate && <span className={overdue ? "todo-overdue" : ""}><Icon name="clock" size={13} />{overdue ? "Vencida: " : item.dueDate === today ? "Hoy: " : "Fecha: "}{formatDate(item.dueDate, true)}</span>}
             {item.reminderAt && <span><Icon name="bell" size={13} />{item.completedAt ? "Recordatorio desactivado" : item.reminderNotifiedAt ? "Recordatorio enviado" : `Recordar: ${new Date(item.reminderAt).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" })}`}</span>}
             {item.caseId && (related ? <button className="link-button" onClick={() => onOpenCase(related)}>Ver caso {related.number}{related.status === "closed" ? " (cerrado)" : ""}</button> : <span>Caso eliminado (v&iacute;nculo conservado)</span>)}
+            {related?.customerName && <span className="customer-detail">Cliente: {related.customerName}</span>}
           </div>
         </div>
         <button className="icon-button" aria-label={`Editar tarea ${item.title}`} onClick={() => onEdit(item)}><Icon name="edit" size={15} /></button>

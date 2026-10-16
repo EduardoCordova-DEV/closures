@@ -238,7 +238,7 @@ export function csv(records: CaseRecord[]): string {
   };
   const rows = records.map(item => [
     item.number, item.title, item.product, { work: "En trabajo", waiting: "En espera", closed: "Cerrado" }[item.status],
-    item.openedAt, item.closedAt || ""
+    item.openedAt, item.closedAt || "", item.customerName
   ].map(escape).join(","));
-  return "\uFEFF" + ['"ID","Descripcion","Producto","Estado","Apertura","Cierre"', ...rows].join("\r\n");
+  return "\uFEFF" + ['"ID","Descripcion","Producto","Estado","Apertura","Cierre","Cliente"', ...rows].join("\r\n");
 }

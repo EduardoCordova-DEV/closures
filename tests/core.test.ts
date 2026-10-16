@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { addDays, dateKey, daysBetween, formatDate, inWeek, isDate, isWorkday, weekEnd, weekLabel, weekStart } from "../shared/dates";
 import type { CaseInput } from "../shared/model";
 import { csv, Store } from "../electron/store";
@@ -66,7 +67,7 @@ test("active registration is not a closure; SQLite survives reopening", () => {
   const file = path.join(folder, "tracking.sqlite");
   let store = new Store(file);
   try {
-    const created = store.create(fixture());
+    const created = store.create({ ...fixture(), customerName: "Cliente de prueba" });
     assert.equal(created.closedAt, null);
     assert.equal(created.status, "work");
     store.close(created.id, closureToday());
@@ -75,6 +76,7 @@ test("active registration is not a closure; SQLite survives reopening", () => {
     assert.equal(store.list().length, 1);
     assert.equal(store.list()[0].closedAt, closureToday());
     assert.equal(store.list()[0].number, "CASE-1");
+    assert.equal(store.list()[0].customerName, "Cliente de prueba");
     assert.equal(store.backup().events.length, 2);
   } finally { store.dispose(); rmSync(folder, { recursive: true, force: true }); }
 });
@@ -154,10 +156,61 @@ test("restoring old data preserves every date without counting weekends in the w
   assert.equal(store.backup().events.length, backup.events.length);
 }));
 test("CSV quoting and formula-like text are safe without altering stored values", () => withStore(store => {
-  const item = store.create({ ...fixture("=1+1"), title: 'A,"B"\nC' });
+  const item = store.create({ ...fixture("=1+1"), title: 'A,"B"\nC', customerName: '=Cliente,"Prueba"' });
   const output = csv(store.list());
   assert.ok(output.startsWith("\uFEFF"));
   assert.ok(output.includes(`"'=1+1"`));
   assert.ok(output.includes(`"A,""B""\nC"`));
+  assert.ok(output.includes('"Cierre","Cliente"'));
+  assert.ok(output.includes(`"'=Cliente,""Prueba"""`));
   assert.equal(store.list()[0].number, item.number);
+  assert.equal(store.list()[0].customerName, '=Cliente,"Prueba"');
+}));
+test("customer names are optional, bounded and preserved in history, closures and backups", () => withStore(store => {
+  const item = store.create({ ...fixture(), customerName: "  Cliente \u00c1rbol  " });
+  assert.equal(item.customerName, "Cliente \u00c1rbol");
+  assert.equal(store.create(fixture("NO-CUSTOMER")).customerName, "");
+  assert.equal(store.create({ ...fixture("WHITESPACE"), customerName: "   " }).customerName, "");
+  assert.equal(store.create({ ...fixture("MAX-NAME"), customerName: "A".repeat(160) }).customerName.length, 160);
+  assert.throws(() => store.create({ ...fixture("TOO-LONG"), customerName: "A".repeat(161) }), /160/);
+  assert.throws(() => store.update(item.id, { ...fixture(), customerName: "A".repeat(161) }, null), /160/);
+  assert.equal(store.list().find(record => record.id === item.id)?.customerName, "Cliente \u00c1rbol");
+  store.close(item.id, closureToday());
+  assert.equal(store.list().find(record => record.id === item.id)?.customerName, "Cliente \u00c1rbol");
+  store.update(item.id, { ...fixture(), customerName: "Cliente corregido" }, closureToday());
+  assert.equal(store.backup().events.at(-1)?.record.customerName, "Cliente corregido");
+  store.reopen(item.id);
+  assert.equal(store.list().find(record => record.id === item.id)?.customerName, "Cliente corregido");
+  store.restore(store.backup());
+  assert.equal(store.list().find(record => record.id === item.id)?.customerName, "Cliente corregido");
+  const backup = store.backup();
+  const invalid = { ...backup, cases: backup.cases.map(record => ({ ...record, customerName: null })) };
+  assert.throws(() => store.restore(invalid));
+  assert.equal(store.list().find(record => record.id === item.id)?.customerName, "Cliente corregido");
+  store.update(item.id, { ...fixture(), customerName: "" }, null);
+  assert.equal(store.list().find(record => record.id === item.id)?.customerName, "");
+  store.remove(item.id);
+  assert.equal(store.backup().events.at(-1)?.record.customerName, "");
+}));
+test("legacy cases and v1/v2 backups without customer names remain readable without rewriting existing data", () => withStore(store => {
+  const { customerName, ...legacyCase } = store.create(fixture());
+  assert.equal(customerName, "");
+  const backup = store.backup();
+  const legacyEvents = backup.events.map(event => ({ ...event, record: legacyCase }));
+  const database = new DatabaseSync(store.file);
+  try {
+    const raw = JSON.stringify(legacyCase), rawEvent = JSON.stringify(legacyEvents[0]);
+    database.prepare("UPDATE cases SET record=? WHERE id=?").run(raw, legacyCase.id);
+    database.prepare("UPDATE events SET record=? WHERE id=?").run(rawEvent, legacyEvents[0].id);
+    assert.equal(store.list()[0].customerName, "");
+    assert.equal(store.backup().events[0].record.customerName, "");
+    assert.equal(database.prepare("SELECT record FROM cases WHERE id=?").get(legacyCase.id)?.record, raw);
+    assert.equal(database.prepare("SELECT record FROM events WHERE id=?").get(legacyEvents[0].id)?.record, rawEvent);
+    for (const schemaVersion of [1, 2]) {
+      store.restore({ ...backup, schemaVersion, cases: [legacyCase], events: legacyEvents });
+      assert.equal(store.list()[0].customerName, "");
+      assert.equal(store.list()[0].openedAt, legacyCase.openedAt);
+      assert.equal(store.backup().events[0].record.customerName, "");
+    }
+  } finally { database.close(); }
 }));

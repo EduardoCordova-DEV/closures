@@ -13,17 +13,19 @@ async function unwrap<T>(promise: Promise<Result<T>>): Promise<T> {
   return result.value;
 }
 const statusLabels = { work: "En trabajo", waiting: "En espera", closed: "Cerrado" };
+const warningDays = 6;
+const overdueDays = 12;
 
 function CaseAge({ item, today, testId, naturalDays = false }: {
   item: CaseRecord; today: string; testId: string; naturalDays?: boolean;
 }) {
   const days = daysBetween(item.openedAt, item.closedAt ?? today);
-  const level = days >= 14 ? "overdue" : days >= 6 ? "warning" : "safe";
+  const level = days >= overdueDays ? "overdue" : days >= warningDays ? "warning" : "safe";
   const label = `${days} ${days === 1 ? "d\u00eda" : "d\u00edas"} ${item.status === "closed" ? "hasta el cierre" : "abierto"}`;
-  const hint = level === "overdue" ? "Limite de 14 dias alcanzado o superado."
-    : level === "warning" ? "Acercandose al limite de 14 dias." : "Dentro del plazo inicial de 0 a 5 dias.";
+  const hint = level === "overdue" ? "Limite de 12 dias alcanzado o superado."
+    : level === "warning" ? "Acercandose al limite de 12 dias." : "Dentro del plazo inicial de 0 a 5 dias.";
   return <span className={`case-age age-${level}`} data-testid={testId}
-    title={`${hint} Meta: cerrar antes de 14 dias naturales, incluidos sabados y domingos. El dia de apertura cuenta como 0.`}>
+    title={`${hint} Meta: cerrar antes de 12 dias naturales, incluidos sabados y domingos. El dia de apertura cuenta como 0.`}>
     {label}{naturalDays && " \u00b7 d\u00edas naturales"}
   </span>;
 }
@@ -49,6 +51,7 @@ function CaseForm({ item, busy, onSave, onCancel, onDelete, onReopen }: {
     const product = data.get("product"), status = data.get("status");
     onSave({
       number: String(data.get("number") || ""), title: String(data.get("title") || ""),
+      customerName: String(data.get("customerName") || ""),
       product: product === "MySQL" || product === "Otro" ? product : "PostgreSQL",
       status: status === "waiting" ? "waiting" : "work", openedAt: String(data.get("openedAt") || "")
     }, item?.status === "closed" ? String(data.get("closedAt") || "") : null);
@@ -56,6 +59,7 @@ function CaseForm({ item, busy, onSave, onCancel, onDelete, onReopen }: {
   return <form onSubmit={submit}>
     <fieldset disabled={busy}>
       <label>ID del caso<input name="number" required maxLength={80} defaultValue={item?.number} placeholder="Ej. 2609290010000000" autoFocus autoComplete="off" /></label>
+      <label>Nombre del cliente<input name="customerName" maxLength={160} defaultValue={item?.customerName || ""} placeholder="Nombre o empresa (opcional)" autoComplete="off" /></label>
       <label>Descripci&oacute;n breve<input name="title" required maxLength={240} defaultValue={item?.title} placeholder="Ej. Revision de conectividad" autoComplete="off" /></label>
       <div className="field-pair"><label>Producto<select name="product" defaultValue={item?.product || "PostgreSQL"}><option>PostgreSQL</option><option>MySQL</option><option>Otro</option></select></label>
         {item?.status !== "closed" && <label>Estado actual<select name="status" defaultValue={item?.status || "work"}><option value="work">En trabajo</option><option value="waiting">En espera</option></select></label>}</div>
@@ -77,8 +81,8 @@ function CloseForm({ active, initialId, cases, goal, today, busy, onSubmit, onCa
   const count = targetWeek ? cases.filter(candidate => candidate.status === "closed" && inWeek(candidate.closedAt, targetWeek)).length : 0;
   return <form onSubmit={event => { event.preventDefault(); onSubmit(id, date); }}>
     <fieldset disabled={busy}>
-      <label>Caso que deseas cerrar<select required value={id} onChange={event => setId(event.target.value)} autoFocus><option value="">Selecciona un caso activo</option>{active.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.number} - {candidate.title}</option>)}</select></label>
-      {item && <div className="close-details"><strong>{item.title}</strong><span>{item.product} &middot; Abierto el {formatDate(item.openedAt)}</span><span>Estado actual: {statusLabels[item.status]}</span><CaseAge item={item} today={today} testId="close-case-age" naturalDays /></div>}
+      <label>Caso que deseas cerrar<select required value={id} onChange={event => setId(event.target.value)} autoFocus><option value="">Selecciona un caso activo</option>{active.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.number} - {candidate.title}{candidate.customerName && ` - ${candidate.customerName}`}</option>)}</select></label>
+      {item && <div className="close-details"><strong>{item.title}</strong><span className="customer-detail" data-testid="close-case-customer">Cliente: {item.customerName || "Sin cliente"}</span><span>{item.product} &middot; Abierto el {formatDate(item.openedAt)}</span><span>Estado actual: {statusLabels[item.status]}</span><CaseAge item={item} today={today} testId="close-case-age" naturalDays /></div>}
       <label>Fecha de cierre<input type="date" required value={date} min={item?.openedAt || "1900-01-01"} max={dateKey()} onChange={event => setDate(event.target.value)} /></label>
       <p className="field-hint">Semana laboral: lunes a viernes. Cuenta por fecha de cierre, no de captura.</p>
       <div className="impact" aria-live="polite"><Icon name="target" /><p>{!targetWeek ? "Selecciona una fecha de lunes a viernes." : item ? `Al confirmar: ${count + 1} de ${goal} cierres (${weekLabel(targetWeek)}).` : "Elige un caso para continuar."}</p></div>
@@ -142,7 +146,7 @@ export function App() {
   const selected = active.find(item => item.id === selectedId) || active[0] || null;
   const source = tab === "active" ? active : closed;
   const normalized = query.trim().toLocaleLowerCase("es");
-  const filtered = source.filter(item => `${item.number} ${item.title} ${item.product}`.toLocaleLowerCase("es").includes(normalized));
+  const filtered = source.filter(item => `${item.number} ${item.title} ${item.customerName} ${item.product}`.toLocaleLowerCase("es").includes(normalized));
   const missing = Math.max(0, state.goal - closed.length);
   const changeTab = (value: "active" | "closed") => { setSection("cases"); setTab(value); setQuery(""); };
   const saveTodo = (input: TodoInput) => void run(async () => {
@@ -164,7 +168,7 @@ export function App() {
     await reload();
     setToast(item.status === "closed" ? "Cambios guardados. El conteo se actualizo." : "Caso guardado en Activos. No suma un cierre.");
   });
-  return <div className="app">
+  return <div className={section === "cases" ? "app app-dashboard" : "app"}>
     <header className="titlebar"><span className="app-symbol"><Icon name="check" size={12} /></span>Cierres / Mesa enfocada<span className="titlebar-local">TU TRACKING &middot; EN TU EQUIPO</span></header>
     <div className="shell">
       <aside className="sidebar">
@@ -200,23 +204,45 @@ export function App() {
         </section>
         <div className="workspace">
           <section className="table-panel">
-            <div className="table-tools"><div className="tabs"><button aria-pressed={tab === "active"} onClick={() => changeTab("active")}>Activos <span>{active.length}</span></button><button aria-pressed={tab === "closed"} onClick={() => changeTab("closed")}>Cerrados <span>{closed.length}</span></button></div><label className="search-box"><Icon name="search" size={15} /><input type="search" aria-label="Buscar casos" placeholder="Buscar ID, tema o producto" value={query} onChange={event => setQuery(event.target.value)} /></label></div>
-            <div className="age-legend" aria-label="Plazo de cierre"><span>Meta: antes de 14 d&iacute;as{tab === "active" && " \u00b7 M\u00e1s antiguos primero"}</span><span className="age-safe"><span className="dot" />0&ndash;5 d&iacute;as</span><span className="age-warning"><span className="dot" />6&ndash;13 d&iacute;as</span><span className="age-overdue"><span className="dot" />14+ d&iacute;as</span></div>
-            {filtered.length ? <table><thead><tr><th className="col-pick" /><th>CASO / DESCRIPCI&Oacute;N</th><th className="col-age" scope="col" aria-sort={tab === "active" ? "descending" : undefined}>D&Iacute;AS ABIERTO</th><th>ESTADO</th><th><span className="sr-only">Editar</span></th></tr></thead><tbody>
-              {filtered.map(item => <tr key={item.id} className={tab === "active" && selected?.id === item.id ? "selected" : ""}>
+            <div className="table-tools"><div className="tabs"><button aria-pressed={tab === "active"} onClick={() => changeTab("active")}>Activos <span>{active.length}</span></button><button aria-pressed={tab === "closed"} onClick={() => changeTab("closed")}>Cerrados <span>{closed.length}</span></button></div><label className="search-box"><Icon name="search" size={15} /><input type="search" aria-label="Buscar casos" placeholder="Buscar ID, cliente o tema" value={query} onChange={event => setQuery(event.target.value)} /></label></div>
+            <div className="age-legend" aria-label="Plazo de cierre"><span>Meta: antes de 12 d&iacute;as{tab === "active" && " \u00b7 M\u00e1s antiguos primero"}</span><span className="age-safe"><span className="dot" />0&ndash;5 d&iacute;as</span><span className="age-warning"><span className="dot" />6&ndash;11 d&iacute;as</span><span className="age-overdue"><span className="dot" />12+ d&iacute;as</span></div>
+            <div key={tab} className="case-list-scroll" role="region" aria-label="Lista de casos" tabIndex={0}>
+            {filtered.length ? <table className="case-table"><thead><tr><th className="col-pick" /><th>CASO / DESCRIPCI&Oacute;N</th><th className="col-customer" scope="col">CLIENTE</th><th className="col-age" scope="col" aria-sort={tab === "active" ? "descending" : undefined}>D&Iacute;AS ABIERTO</th><th className="col-status">ESTADO</th><th className="edit-cell"><span className="sr-only">Editar</span></th></tr></thead><tbody>
+              {filtered.map(item => {
+                const selectable = tab === "active";
+                const isSelected = selectable && selected?.id === item.id;
+                return <tr key={item.id}
+                  className={`case-row${selectable ? " selectable" : ""}${isSelected ? " selected" : ""}`}
+                  tabIndex={selectable ? 0 : undefined}
+                  aria-label={selectable ? `Seleccionar caso ${item.number}: ${item.title}` : undefined}
+                  aria-selected={selectable ? isSelected : undefined}
+                  onClick={selectable ? () => setSelectedId(item.id) : undefined}
+                  onKeyDown={selectable ? event => {
+                    if (event.currentTarget !== event.target || (event.key !== "Enter" && event.key !== " ")) return;
+                    event.preventDefault();
+                    setSelectedId(item.id);
+                  } : undefined}>
                 <td className="col-pick">{tab === "active" ? <button className="case-picker" aria-label={`Seleccionar caso ${item.number}`} aria-pressed={selected?.id === item.id} onClick={() => setSelectedId(item.id)}>{selected?.id === item.id && <Icon name="check" size={12} />}</button> : <span className="mint"><Icon name="check" size={15} /></span>}</td>
                 <td><span className="case-id">{item.number}</span><span className="case-title">{item.title}</span><span className="case-meta">{item.product} &middot; {item.status === "closed" ? `Cerrado ${formatDate(item.closedAt!)}` : `Abierto ${formatDate(item.openedAt)}`}</span></td>
+                <td className="col-customer"><span className={item.customerName ? "case-customer" : "case-customer missing"} data-testid="case-customer">{item.customerName || "Sin cliente"}</span></td>
                 <td className="col-age"><CaseAge item={item} today={today} testId="case-age" /></td>
                 <td><span className={`status ${item.status}`}><span className="dot" />{statusLabels[item.status]}</span></td>
-                <td className="edit-cell"><button className="icon-button" aria-label={`Editar caso ${item.number}`} title="Editar caso" onClick={() => show({ kind: "edit", item })}><Icon name="edit" size={15} /></button></td>
-              </tr>)}
-            </tbody></table> : <div className="empty"><span className="empty-symbol"><Icon name={tab === "active" ? "grid" : "archive"} size={29} /></span><h2>{query ? "Sin coincidencias" : tab === "active" ? "Tu mesa esta lista." : "Cada cierre cuenta."}</h2><p>{query ? "Prueba otro ID, tema o producto." : tab === "active" ? "Registra tus casos actuales para empezar. Tus datos se guardan al confirmar, sin pasos extra." : "Todavia no hay cierres en esta semana. Puedes consultar otras semanas con las flechas."}</p>{!query && tab === "active" && <button className="button" onClick={() => show({ kind: "register" })}><Icon name="plus" />Registrar mi primer caso</button>}</div>}
+                <td className="edit-cell"><button className="icon-button" aria-label={`Editar caso ${item.number}`} title="Editar caso" onClick={event => { event.stopPropagation(); show({ kind: "edit", item }); }}><Icon name="edit" size={15} /></button></td>
+              </tr>;
+              })}
+            </tbody></table> : <div className="empty"><span className="empty-symbol"><Icon name={tab === "active" ? "grid" : "archive"} size={29} /></span><h2>{query ? "Sin coincidencias" : tab === "active" ? "Tu mesa esta lista." : "Cada cierre cuenta."}</h2><p>{query ? "Prueba otro ID, cliente, tema o producto." : tab === "active" ? "Registra tus casos actuales para empezar. Tus datos se guardan al confirmar, sin pasos extra." : "Todavia no hay cierres en esta semana. Puedes consultar otras semanas con las flechas."}</p>{!query && tab === "active" && <button className="button" onClick={() => show({ kind: "register" })}><Icon name="plus" />Registrar mi primer caso</button>}</div>}
+            </div>
             <div className="table-footer"><span>{filtered.length} de {source.length} {tab === "active" ? "casos activos" : "cierres de la semana"}</span><span>{tab === "active" && selected ? `${selected.number} seleccionado` : "Cuenta por fecha de cierre"}</span></div>
           </section>
-          <aside className="focus-panel"><div className="eyebrow">Tu acci&oacute;n principal</div><div className="focus-check"><Icon name="circle" size={23} /></div><h2>Tu siguiente cierre<br />empieza aqu&iacute;.</h2>
-            {selected ? <div className="focus-case"><span className="focus-id">{selected.number}</span><p>{selected.title}</p><div className="focus-meta">{selected.product}<br />Abierto el {formatDate(selected.openedAt)} &middot; {statusLabels[selected.status]}<CaseAge item={selected} today={today} testId="focus-case-age" /><span>Incluye s&aacute;bados y domingos.</span></div></div> : <div className="focus-case"><p>Un lugar para todos tus casos.</p><div className="focus-meta">Registra un caso actual para habilitar el cierre.</div></div>}
+          <aside className="focus-panel">
+            <div key={selected?.id} className="focus-content" role="region" aria-label="Detalles del caso" tabIndex={0}>
+            <div className="eyebrow">Tu acci&oacute;n principal</div><div className="focus-check"><Icon name="circle" size={23} /></div><h2>Tu siguiente cierre<br />empieza aqu&iacute;.</h2>
+            {selected ? <div className="focus-case"><span className="focus-id">{selected.number}</span><p>{selected.title}</p><div className="focus-meta"><span className="customer-detail" data-testid="focus-case-customer">Cliente: {selected.customerName || "Sin cliente"}</span>{selected.product}<br />Abierto el {formatDate(selected.openedAt)} &middot; {statusLabels[selected.status]}<CaseAge item={selected} today={today} testId="focus-case-age" /><span>Incluye s&aacute;bados y domingos.</span></div></div> : <div className="focus-case"><p>Un lugar para todos tus casos.</p><div className="focus-meta">Registra un caso actual para habilitar el cierre.</div></div>}
+            </div>
+            <div className="focus-actions">
             <button className="button primary close-primary" disabled={!active.length || busy} onClick={() => show({ kind: "close" })}><Icon name="circle" size={21} />Cerrar Caso</button><p className="focus-help">T&uacute; confirmas el caso y la fecha.<br />No se cierra nada con un solo clic.</p>
             {selected && <button className="link-button todo-case-action" onClick={() => show({ kind: "todo", caseId: selected.id })}>Crear To Do para este caso</button>}
+            </div>
           </aside>
         </div>
         <p className="below-table"><Icon name="shield" />Registrar agrega un caso a Activos. Solo confirmar el cierre suma a tu meta semanal.</p>

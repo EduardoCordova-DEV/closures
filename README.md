@@ -8,13 +8,13 @@ Descarga los ejecutables desde [Releases](https://github.com/EduardoCordova-DEV/
 
 | Archivo | Uso | Ubicacion de casos y respaldos |
 | --- | --- | --- |
-| `Cierres-Setup-1.1.0-x64.exe` | Instala para tu usuario y agrega Cierres al menu Inicio | `%APPDATA%\Cierres` |
-| `Cierres-Portable-1.1.0-x64.exe` | Se ejecuta sin instalacion | `Cierres-data` junto al ejecutable |
+| `Cierres-Setup-1.3.0-x64.exe` | Instala para tu usuario y agrega Cierres al menu Inicio | `%APPDATA%\Cierres` |
+| `Cierres-Portable-1.3.0-x64.exe` | Se ejecuta sin instalacion | `Cierres-data` junto al ejecutable |
 | `SHA256SUMS.txt` | Hashes para verificar las dos descargas | No contiene datos de casos |
 
 ### Instalacion local
 
-1. Descarga y ejecuta `Cierres-Setup-1.1.0-x64.exe`.
+1. Descarga y ejecuta `Cierres-Setup-1.3.0-x64.exe`.
 2. La instalacion por usuario no requiere administrador; se guarda en `%LOCALAPPDATA%\Programs\Cierres`.
 3. Abre **Cierres** desde Inicio. El instalador no abre la app automaticamente.
 4. Para actualizar, guarda los formularios, usa **Salir de Cierres** (tambien disponible en la bandeja) y ejecuta el nuevo instalador. Cerrar la ventana solo la oculta. El tracking de `%APPDATA%\Cierres` se conserva, tambien si antes usabas la instalacion mediante PowerShell.
@@ -23,7 +23,7 @@ Puedes desinstalar desde **Configuracion de Windows > Aplicaciones**. La desinst
 
 ### Version portable
 
-1. Coloca `Cierres-Portable-1.1.0-x64.exe` en una carpeta con permisos de escritura, en tu disco o en una memoria USB.
+1. Coloca `Cierres-Portable-1.3.0-x64.exe` en una carpeta con permisos de escritura, en tu disco o en una memoria USB.
 2. Ejecutalo. Al primer inicio crea **`Cierres-data` junto al EXE**, con la base, respaldos y archivos locales de la interfaz. No crea accesos ni modifica el PATH.
 3. Para llevar el tracking a otro equipo, usa **Salir de Cierres** y copia **el EXE y toda la carpeta `Cierres-data`**. No desconectes la unidad mientras la app siga en la bandeja.
 4. Para actualizar, usa **Salir de Cierres** y reemplaza solamente el EXE; conserva `Cierres-data`. Evita abrir dos versiones sobre los mismos datos.
@@ -37,8 +37,8 @@ No uses carpetas de solo lectura ni sincronizadas mientras la app este abierta. 
 En PowerShell, desde la carpeta de descarga:
 
 ```powershell
-Get-FileHash .\Cierres-Setup-1.1.0-x64.exe -Algorithm SHA256
-Get-FileHash .\Cierres-Portable-1.1.0-x64.exe -Algorithm SHA256
+Get-FileHash .\Cierres-Setup-1.3.0-x64.exe -Algorithm SHA256
+Get-FileHash .\Cierres-Portable-1.3.0-x64.exe -Algorithm SHA256
 Get-Content .\SHA256SUMS.txt
 ```
 
@@ -49,9 +49,12 @@ Compara los hashes. Los ejecutables **no estan firmados con un certificado de ed
 Abre **Cierres** desde Inicio o ejecuta el EXE portable. El comando `closures` se agrega al PATH cuando usas el instalador PowerShell desde el codigo (`npm run install:local`); el instalador EXE no modifica el PATH.
 
 - **Registrar caso** agrega un caso activo. No aumenta el conteo de cierres.
-- Cada caso muestra sus **dias abierto**, desde la fecha de apertura registrada hasta hoy, en una columna destacada entre la descripcion y el estado, ademas del panel lateral y la confirmacion de cierre. Son dias naturales: semanas completas de siete dias, incluidos sabados y domingos. El dia de apertura muestra 0 y el siguiente muestra 1; no se usa la fecha de captura.
+- **Nombre del cliente** es opcional al registrar o editar un caso (hasta 160 caracteres). Se muestra en la columna **Cliente**, entre la descripcion y **Dias abierto**, con tipografia de titulo h2 (24 px, ajustada a 21-22 px en ventanas estrechas) en Activos y Cerrados. Los nombres largos se distribuyen en varias lineas sin recortarse. Tambien aparece en el panel lateral y la confirmacion de cierre. La busqueda tambien encuentra nombres de clientes. Los casos anteriores se conservan sin modificaciones y muestran **Sin cliente** hasta que les agregues un nombre; puedes borrarlo al editar.
+- El dashboard adapta la tabla y la tarjeta de cierre al espacio disponible de la ventana, manteniendo su altura alineada y sus anchos proporcionales. En Activos y Cerrados, la lista tiene scroll interno cuando los casos no caben; la busqueda, los encabezados de columna y el contador permanecen visibles. Los detalles de la tarjeta tienen su propio scroll y **Cerrar Caso** sigue visible. Tambien puedes enfocar las zonas de scroll con Tab y recorrerlas con el teclado.
+- Cada caso muestra sus **dias abierto**, desde la fecha de apertura registrada hasta hoy, en una columna destacada entre el cliente y el estado, ademas del panel lateral y la confirmacion de cierre. Son dias naturales: semanas completas de siete dias, incluidos sabados y domingos. El dia de apertura muestra 0 y el siguiente muestra 1; no se usa la fecha de captura.
 - Los casos activos aparecen del mas antiguo al mas reciente por fecha de apertura, tambien al buscar y al elegir un caso para cerrar. La seleccion manual se conserva.
-- La meta es cerrar **antes de 14 dias naturales**. El indicador es **verde de 0 a 5 dias**, **amarillo de 6 a 13** y **rojo desde los 14**, tanto en la tabla como en el panel lateral y la confirmacion de cierre. En Cerrados el color corresponde a la duracion hasta el cierre; se mantiene su orden por fecha de cierre. Son avisos visuales: no cierran casos automaticamente ni impiden cerrarlos fuera de plazo.
+- En **Activos**, toda la fila del caso es seleccionable: al pasar el puntero se resalta y puedes hacer clic en cualquier columna para mostrar el caso en la tarjeta de cierre. Tambien puedes enfocarla con Tab y seleccionarla con Enter o Espacio. El lapiz sigue abriendo solamente la edicion.
+- La meta es cerrar **antes de 12 dias naturales**. El indicador es **verde de 0 a 5 dias**, **amarillo de 6 a 11** y **rojo desde los 12**, tanto en la tabla como en el panel lateral y la confirmacion de cierre. En Cerrados el color se recalcula con la misma regla segun la duracion hasta el cierre; no se modifican fechas ni registros historicos y se mantiene su orden por fecha de cierre. Son avisos visuales: no cierran casos automaticamente ni impiden cerrarlos fuera de plazo.
 - La antiguedad se actualiza automaticamente al cambiar el dia o volver a la ventana. En Cerrados se muestra el total hasta la fecha de cierre y deja de aumentar. Corregir fechas recalcula el total; reabrir vuelve a contar desde la apertura original hasta hoy, sin descontar intervalos anteriores.
 - Selecciona un caso y pulsa **Cerrar Caso**. Confirma el caso y su fecha.
 - La semana laboral va de lunes a viernes, usando fechas locales del equipo. La meta sigue siendo cinco cierres y cuenta por fecha de cierre, no por fecha de captura. Las flechas avanzan siete dias, de un lunes al siguiente.
@@ -64,7 +67,7 @@ Abre **Cierres** desde Inicio o ejecuta el EXE portable. El comando `closures` s
 ## To Do y recordatorios
 
 - Abre **To Do > Nueva tarea**. Escribe el titulo; las notas, fecha limite, recordatorio y caso relacionado son opcionales.
-- Desde el panel de un caso activo, **Crear To Do para este caso** preselecciona el vinculo. Tambien puedes vincular tareas a casos cerrados, buscar por tarea o caso y filtrar por caso.
+- Desde el panel de un caso activo, **Crear To Do para este caso** preselecciona el vinculo. Tambien puedes vincular tareas a casos cerrados, buscar por tarea, caso o cliente y filtrar por caso. Si el caso tiene nombre de cliente, se muestra al seleccionarlo y junto a la tarea vinculada.
 - Las pendientes se ordenan por fecha limite (vencidas primero; sin fecha al final). Puedes completarlas, reabrirlas, editarlas o eliminarlas con confirmacion. **Completar una tarea no cierra un caso ni aumenta la meta semanal.** Cerrar o eliminar un caso tampoco completa ni borra sus tareas.
 - La fecha limite acepta cualquier dia. El recordatorio usa una fecha y hora local y se guarda como instante UTC; si cambias de zona horaria, se muestra la hora local equivalente. La fecha limite sola no genera avisos. Un recordatorio pasado avisa en la siguiente revision.
 - Cierres revisa recordatorios cada 15 segundos mientras esta ejecutandose, incluso con la ventana oculta. **La X de la ventana la envia a la bandeja del sistema.** El menu de la bandeja permite abrir Cierres, abrir To Do o salir. Tambien puedes volver con `closures`.
@@ -81,6 +84,8 @@ En la version instalada, la base se guarda en `%APPDATA%\Cierres\tracking.sqlite
 Se usa SQLite con transacciones, WAL y sincronizacion completa. Solo se muestra confirmacion cuando la escritura finaliza. La base se verifica al iniciar; ante un error no se sustituye por una base vacia.
 
 **Datos y respaldos** permite exportar un respaldo JSON completo de casos y tareas, restaurarlo, exportar los casos a CSV y abrir la carpeta de datos. El CSV no incluye tareas. Restaurar **reemplaza todos los casos y tareas** actuales, previa confirmacion; no combina bases. Un respaldo antiguo v1 no contiene tareas y al restaurarlo la lista queda vacia. Antes de restaurar se crea una copia SQLite de seguridad.
+
+El nombre del cliente se conserva en los respaldos JSON y en el historial del caso; el CSV lo incluye en la columna final **Cliente**, manteniendo el orden de las columnas anteriores. Los registros y respaldos antiguos sin este campo se siguen leyendo con el nombre vacio, sin migrar ni reescribir los datos existentes. Usa Cierres **1.2.0 o posterior** para conservar los nombres al editar o exportar; las versiones anteriores no conocen este campo y pueden descartarlo.
 
 En `backups` se conserva una copia SQLite por dia de uso, tomada al comenzar el dia antes de modificar datos. No es una copia despues de cada cambio. Las copias no se borran automaticamente. El JSON v2 exportado contiene los casos, registros eliminados, historial de casos, tareas y estado de entrega de recordatorios. Al actualizar desde la base v1 se crea una copia `tracking-before-v2-...sqlite` antes de migrar; los casos se conservan. Usa Cierres 1.1.0 o posterior para abrir una base o respaldo v2.
 
@@ -107,6 +112,44 @@ Para ejecutar la compilacion de produccion:
 npm run build
 npm start
 ```
+
+### Instalar localmente y habilitar `closures` en CMD
+
+Para una instalacion nueva, abre **CMD** y ejecuta:
+
+```bat
+git clone https://github.com/EduardoCordova-DEV/closures.git
+cd closures
+npm ci
+npm run package
+npm run install:local
+```
+
+Antes de actualizar una instalacion existente, guarda cualquier formulario y usa **Salir de Cierres**, tambien disponible en la bandeja. Cerrar solamente la ventana no termina la aplicacion y el instalador local se detendra para proteger los datos.
+
+`npm run install:local` realiza lo siguiente sin requerir permisos de administrador:
+
+- Copia la aplicacion a `%LOCALAPPDATA%\Programs\Cierres`.
+- Crea el acceso **Cierres** en el menu Inicio.
+- Crea el launcher `%LOCALAPPDATA%\Programs\Cierres\bin\closures.cmd`.
+- Agrega esa carpeta `bin` al `PATH` del usuario, que es el equivalente persistente del alias `closures` en CMD.
+
+Cierra CMD y abre una ventana nueva para que cargue el `PATH` actualizado. Despues verifica y abre la aplicacion:
+
+```bat
+where closures
+closures
+```
+
+`where closures` debe mostrar `%LOCALAPPDATA%\Programs\Cierres\bin\closures.cmd`. Si necesitas abrirla antes de reiniciar CMD, ejecuta directamente:
+
+```bat
+"%LOCALAPPDATA%\Programs\Cierres\bin\closures.cmd"
+```
+
+El comando `closures` abre la instalacion local; no cambia la ubicacion del tracking. Los casos y respaldos permanecen en `%APPDATA%\Cierres`. No crees otro `closures.cmd` en una carpeta distinta ni agregues manualmente rutas duplicadas al `PATH`.
+
+### Validar y empaquetar
 
 Para validar y empaquetar:
 
@@ -135,22 +178,22 @@ Se generan en `release`. El empaquetado debe hacerse en Windows x64, requiere In
 
 `npm run package:release` genera archivos locales (`--publish never`); `git push` sube commits y etiquetas, pero ninguno de esos pasos crea una Release ni adjunta los EXE.
 
-Necesitas una cuenta con permiso **Write** sobre `EduardoCordova-DEV/closures` y GitHub CLI (`gh`) autenticado con esa cuenta. Primero guarda y sube el codigo de la version en un commit y una etiqueta correspondiente, por ejemplo `v1.1.0`. La etiqueta debe apuntar al codigo con el que generaste los ejecutables, no a la version anterior.
+Necesitas una cuenta con permiso **Write** sobre `EduardoCordova-DEV/closures` y GitHub CLI (`gh`) autenticado con esa cuenta. Primero guarda y sube el codigo de la version en un commit y una etiqueta correspondiente, por ejemplo `v1.3.0`. La etiqueta debe apuntar al codigo con el que generaste los ejecutables, no a la version anterior.
 
 Con la etiqueta ya en GitHub y los ejecutables generados y comprobados:
 
 ```powershell
-gh release create v1.1.0 `
-  .\release\Cierres-Setup-1.1.0-x64.exe `
-  .\release\Cierres-Portable-1.1.0-x64.exe `
+gh release create v1.3.0 `
+  .\release\Cierres-Setup-1.3.0-x64.exe `
+  .\release\Cierres-Portable-1.3.0-x64.exe `
   .\release\SHA256SUMS.txt `
   --repo EduardoCordova-DEV/closures `
   --verify-tag `
-  --title "Cierres 1.1.0" `
-  --notes "Windows x64: instalador local y portable. Incluye To Do, recordatorios y seguimiento de casos. Ejecutables sin firma de editor."
+  --title "Cierres 1.3.0" `
+  --notes "Windows x64: instalador local y portable. Incluye plazo visual de 12 dias, dashboard adaptable, seleccion de casos por fila, nombres de clientes, To Do y recordatorios. Ejecutables sin firma de editor."
 ```
 
-`--verify-tag` impide crear la Release si falta la etiqueta remota. Si la Release ya existe pero le faltan archivos, adjuntalos con `gh release upload v1.1.0` seguido de las rutas de los archivos faltantes y `--repo EduardoCordova-DEV/closures`; no sobrescribas descargas existentes sin verificar su version.
+`--verify-tag` impide crear la Release si falta la etiqueta remota. Si la Release ya existe pero le faltan archivos, adjuntalos con `gh release upload v1.3.0` seguido de las rutas de los archivos faltantes y `--repo EduardoCordova-DEV/closures`; no sobrescribas descargas existentes sin verificar su version.
 
 Tambien puedes usar **Releases > Draft a new release** en GitHub, seleccionar la etiqueta y arrastrar los dos EXE y `SHA256SUMS.txt`. No adjuntes bases, respaldos, logs ni la carpeta `win-unpacked`. Si aparece un error 403, revisa la cuenta y sus permisos; cambiar `.gitignore` no lo resuelve.
 

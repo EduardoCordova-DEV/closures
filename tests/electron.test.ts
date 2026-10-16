@@ -40,18 +40,30 @@ async function ageTone(locator: Locator, level: "safe" | "warning" | "overdue") 
 }
 async function ageColumn(page: Page) {
   assert.equal(await page.getByRole("columnheader", { name: "D\u00cdAS ABIERTO", exact: true }).count(), 1);
+  assert.equal(await page.getByRole("columnheader", { name: "CLIENTE", exact: true }).count(), 1);
   const layout = await page.evaluate(() => {
     const label = document.querySelector<HTMLElement>('[data-testid="case-age"]')!;
     const cell = label.closest("td")!;
     const row = cell.parentElement!;
     const description = row.children[1];
-    const status = row.children[3];
+    const customer = row.children[2];
+    const customerLabel = customer.querySelector<HTMLElement>('[data-testid="case-customer"]')!;
+    const customerStyle = getComputedStyle(customerLabel);
+    const headingStyle = getComputedStyle(document.querySelector(".focus-panel h2")!);
+    const status = row.children[4];
     const bounds = label.getBoundingClientRect(), cellBounds = cell.getBoundingClientRect();
     const panel = document.querySelector(".table-panel")!.getBoundingClientRect();
     const table = document.querySelector("table")!.getBoundingClientRect();
     return {
-      ownColumn: row.children.length === 5 && row.children[2] === cell &&
+      ownColumn: row.children.length === 6 && row.children[3] === cell &&
         !description.querySelector('[data-testid="case-age"]') && !!status.querySelector(".status"),
+      customerColumn: !!customerLabel && customer.getBoundingClientRect().left + 0.5 >= description.getBoundingClientRect().right &&
+        customer.getBoundingClientRect().right <= cellBounds.left + 0.5 &&
+        customerLabel.scrollWidth <= customerLabel.clientWidth &&
+        customerLabel.scrollHeight <= customerLabel.clientHeight,
+      customerTypography: customerStyle.fontSize === headingStyle.fontSize &&
+        Number.parseFloat(customerStyle.fontSize) === (innerWidth <= 1000 ? 21 : innerWidth <= 1190 ? 22 : 24) &&
+        customerStyle.fontWeight === "600",
       contained: bounds.left >= cellBounds.left && bounds.right <= cellBounds.right,
       ordered: cellBounds.left + 0.5 >= description.getBoundingClientRect().right &&
         cellBounds.right <= status.getBoundingClientRect().left + 0.5,
@@ -62,6 +74,49 @@ async function ageColumn(page: Page) {
     };
   });
   assert.ok(Object.values(layout).every(Boolean), `Case age layout: ${JSON.stringify(layout)}`);
+}
+async function dashboardLayout(page: Page, overflow?: boolean) {
+  const layout = await page.evaluate(() => {
+    const workspace = document.querySelector<HTMLElement>(".workspace")!;
+    const table = document.querySelector<HTMLElement>(".workspace>.table-panel")!;
+    const list = document.querySelector<HTMLElement>(".case-list-scroll")!;
+    const focus = document.querySelector<HTMLElement>(".focus-panel")!;
+    const details = document.querySelector<HTMLElement>(".focus-content")!;
+    const actions = document.querySelector<HTMLElement>(".focus-actions")!;
+    const button = document.querySelector<HTMLElement>(".close-primary")!;
+    const tableBounds = table.getBoundingClientRect(), focusBounds = focus.getBoundingClientRect();
+    const listBounds = list.getBoundingClientRect(), buttonBounds = button.getBoundingClientRect();
+    const workspaceBounds = workspace.getBoundingClientRect();
+    const main = document.querySelector("main")!.getBoundingClientRect();
+    const footer = document.querySelector(".app-footer")!.getBoundingClientRect();
+    const expectedFocusWidth = Math.max(235, (workspaceBounds.width - Number.parseFloat(getComputedStyle(workspace).columnGap)) / 4);
+    return {
+      viewport: [innerWidth, innerHeight],
+      listHeight: list.clientHeight,
+      overflow: list.scrollHeight > list.clientHeight + 1,
+      checks: {
+        noPageScroll: document.documentElement.scrollHeight <= innerHeight &&
+          document.documentElement.scrollWidth <= innerWidth && window.scrollY === 0,
+        mainContained: main.bottom <= innerHeight + 0.5,
+        panelsAligned: Math.abs(tableBounds.top - focusBounds.top) < 1 &&
+          Math.abs(tableBounds.bottom - focusBounds.bottom) < 1,
+        panelsFillWorkspace: Math.abs(tableBounds.height - workspaceBounds.height) < 1,
+        proportionalWidth: Math.abs(focusBounds.width - expectedFocusWidth) < 1,
+        usableList: list.clientHeight >= 100 && list.scrollWidth <= list.clientWidth,
+        listContained: listBounds.top >= tableBounds.top && listBounds.bottom <= tableBounds.bottom,
+        controlsVisible: [table, focus, actions, button, document.querySelector(".table-tools")!,
+          document.querySelector(".table-footer")!].map(element => element.getBoundingClientRect())
+          .every(bounds => bounds.top >= 0 && bounds.bottom <= innerHeight + 0.5 &&
+            bounds.left >= 0 && bounds.right <= innerWidth + 0.5),
+        detailsContained: details.clientHeight >= 60 && details.scrollWidth <= details.clientWidth &&
+          details.getBoundingClientRect().bottom <= actions.getBoundingClientRect().top + 0.5,
+        buttonContained: buttonBounds.top >= focusBounds.top && buttonBounds.bottom <= focusBounds.bottom,
+        footerVisible: footer.top >= tableBounds.bottom && footer.bottom <= innerHeight + 0.5
+      }
+    };
+  });
+  assert.ok(Object.values(layout.checks).every(Boolean), `Dashboard layout: ${JSON.stringify(layout)}`);
+  if (overflow !== undefined) assert.equal(layout.overflow, overflow, `Table scroll: ${JSON.stringify(layout)}`);
 }
 test("Electron registers, closes, edits and persists tracking through a full app restart", { timeout: 180000 }, async () => {
   const folder = await mkdtemp(path.join(tmpdir(), "cierres-electron-test-"));
@@ -96,18 +151,28 @@ test("Electron registers, closes, edits and persists tracking through a full app
     assert.equal(await page.locator(".weekbar strong").textContent(), weekLabel(start));
     await count(page, "active-total", 0);
     assert.equal(await page.getByRole("button", { name: "Cerrar Caso", exact: true }).isDisabled(), true);
+    await dashboardLayout(page, false);
     await page.getByRole("button", { name: "Registrar caso", exact: true }).click();
     await page.getByLabel("ID del caso", { exact: true }).fill("TEST-001");
+    await page.getByLabel("Nombre del cliente", { exact: true }).fill("  Cliente Sintetico  ");
     await page.locator('input[name="title"]').fill("Conectividad de prueba");
     await page.getByLabel("Fecha de apertura", { exact: true }).fill(openedAt);
     await page.getByRole("dialog").getByRole("button", { name: "Registrar caso", exact: true }).click();
     await count(page, "active-total", 1);
     await count(page, "closed-total", 0);
+    await age(page, "case-customer", "Cliente Sintetico");
+    await age(page, "focus-case-customer", "Cliente: Cliente Sintetico");
+    await page.getByLabel("Buscar casos", { exact: true }).fill("cliente sintetico");
+    assert.equal(await page.locator("tbody tr").count(), 1);
+    await page.getByLabel("Buscar casos", { exact: true }).fill("cliente inexistente");
+    await page.getByRole("heading", { name: "Sin coincidencias", exact: true }).waitFor();
+    await page.getByLabel("Buscar casos", { exact: true }).fill("");
     await age(page, "case-age", "10 d\u00edas abierto");
     await age(page, "focus-case-age", "10 d\u00edas abierto");
     await ageTone(page.getByTestId("case-age"), "warning");
     await ageTone(page.getByTestId("focus-case-age"), "warning");
     await ageColumn(page);
+    await dashboardLayout(page, false);
     if (process.env.CIERRES_SCREENSHOT_DIR) {
       await mkdir(process.env.CIERRES_SCREENSHOT_DIR, { recursive: true });
       await page.screenshot({ path: path.join(process.env.CIERRES_SCREENSHOT_DIR, "cierres-active-test.png") });
@@ -115,9 +180,10 @@ test("Electron registers, closes, edits and persists tracking through a full app
     await page.getByRole("button", { name: "Semana anterior", exact: true }).click();
     await age(page, "case-age", "10 d\u00edas abierto");
     await page.getByRole("button", { name: "Ir a hoy", exact: true }).click();
-    for (const [days, level] of [[0, "safe"], [1, "safe"], [5, "safe"], [6, "warning"], [13, "warning"], [14, "overdue"], [30, "overdue"], [10, "warning"]] as const) {
+    for (const [days, level] of [[0, "safe"], [1, "safe"], [5, "safe"], [6, "warning"], [11, "warning"], [12, "overdue"], [13, "overdue"], [14, "overdue"], [30, "overdue"], [10, "warning"]] as const) {
       const expected = `${days} ${days === 1 ? "d\u00eda" : "d\u00edas"} abierto`;
       await page.getByRole("button", { name: "Editar caso TEST-001", exact: true }).click();
+      assert.equal(await page.getByLabel("Nombre del cliente", { exact: true }).inputValue(), "Cliente Sintetico");
       await page.getByLabel("Fecha de apertura", { exact: true }).fill(addDays(today, -days));
       await page.locator('select[name="status"]').selectOption("waiting");
       await page.getByRole("button", { name: "Guardar cambios", exact: true }).click();
@@ -126,10 +192,11 @@ test("Electron registers, closes, edits and persists tracking through a full app
       await ageTone(page.getByTestId("case-age"), level);
       await ageTone(page.getByTestId("focus-case-age"), level);
       await page.getByRole("button", { name: "Cerrar Caso", exact: true }).click();
+      await age(page, "close-case-customer", "Cliente: Cliente Sintetico");
       await age(page, "close-case-age", `${expected} \u00b7 d\u00edas naturales`);
       await ageTone(page.getByTestId("close-case-age"), level);
       await page.getByRole("dialog").getByRole("button", { name: "Cancelar", exact: true }).last().click();
-      if (days === 5 || days === 13) {
+      if (days === 5 || days === 11) {
         await page.clock.setFixedTime(new Date(`${addDays(today, 1)}T12:00:00`));
         await page.evaluate(() => window.dispatchEvent(new Event("focus")));
         await age(page, "case-age", `${days + 1} d\u00edas abierto`);
@@ -141,9 +208,23 @@ test("Electron registers, closes, edits and persists tracking through a full app
         await ageTone(page.getByTestId("case-age"), level);
       }
     }
+    const longCustomer = "Cliente".repeat(22);
+    await page.getByRole("button", { name: "Editar caso TEST-001", exact: true }).click();
+    await page.getByLabel("Nombre del cliente", { exact: true }).fill(longCustomer);
+    await page.getByRole("button", { name: "Guardar cambios", exact: true }).click();
+    await age(page, "case-customer", longCustomer);
+    await ageColumn(page);
+    await application!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1100, 800));
+    await page.waitForFunction(() => innerWidth > 1000 && innerWidth <= 1190);
+    await ageColumn(page);
+    await dashboardLayout(page, true);
     await application!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(980, 720));
     await page.waitForFunction(() => innerWidth <= 980);
     await ageColumn(page);
+    await dashboardLayout(page, true);
+    if (process.env.CIERRES_SCREENSHOT_DIR) {
+      await page.screenshot({ path: path.join(process.env.CIERRES_SCREENSHOT_DIR, "cierres-customer-narrow-test.png") });
+    }
     await application!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1380, 930));
     await page.waitForFunction(() => innerWidth > 1190);
     await page.clock.setFixedTime(new Date(`${addDays(today, 1)}T12:00:00`));
@@ -174,11 +255,17 @@ test("Electron registers, closes, edits and persists tracking through a full app
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
     await page.getByRole("button", { name: "Editar caso TEST-001", exact: true }).click();
     await page.locator('input[name="title"]').fill("Conectividad verificada");
+    assert.equal(await page.getByLabel("Nombre del cliente", { exact: true }).inputValue(), longCustomer);
+    await page.getByLabel("Nombre del cliente", { exact: true }).fill("Cliente Actualizado");
     const correctedOpening = addDays(today, -11), correctedClosure = start;
     await page.getByLabel("Fecha de apertura", { exact: true }).fill(correctedOpening);
     await page.locator('input[name="closedAt"]').fill(correctedClosure);
     await page.getByRole("button", { name: "Guardar cambios", exact: true }).click();
     await page.getByText("Conectividad verificada", { exact: true }).waitFor();
+    await age(page, "case-customer", "Cliente Actualizado");
+    await page.getByLabel("Buscar casos", { exact: true }).fill("cliente actualizado");
+    assert.equal(await page.locator("tbody tr").count(), 1);
+    await page.getByLabel("Buscar casos", { exact: true }).fill("");
     const closedAge = `${daysBetween(correctedOpening, correctedClosure)} d\u00edas hasta el cierre`;
     await age(page, "case-age", closedAge);
     await ageTone(page.getByTestId("case-age"), daysBetween(correctedOpening, correctedClosure) <= 5 ? "safe" : "warning");
@@ -203,6 +290,7 @@ test("Electron registers, closes, edits and persists tracking through a full app
     await count(page, "closed-total", 1);
     await count(page, "active-total", 0);
     await page.getByRole("button", { name: /^Cerrados/ }).first().click();
+    await age(page, "case-customer", "Cliente Actualizado");
     await page.getByText("Conectividad verificada", { exact: true }).waitFor();
     await age(page, "case-age", closedAge);
     await page.getByRole("button", { name: "Editar caso TEST-001", exact: true }).click();
@@ -211,25 +299,53 @@ test("Electron registers, closes, edits and persists tracking through a full app
     await count(page, "active-total", 1);
     await count(page, "closed-total", 0);
     await page.getByRole("button", { name: /^Activos/ }).click();
+    await age(page, "case-customer", "Cliente Actualizado");
+    await age(page, "focus-case-customer", "Cliente: Cliente Actualizado");
     await age(page, "case-age", "11 d\u00edas abierto");
     await age(page, "focus-case-age", "11 d\u00edas abierto");
     await ageTone(page.getByTestId("case-age"), "warning");
+    assert.match(await page.getByTestId("case-age").getAttribute("title") || "", /antes de 12 dias/);
     let activeCount = 1;
-    for (const days of [5, 30, 0, 14, 6, 13]) {
+    for (const days of [5, 30, 0, 14, 6, 13, 12, 11]) {
       await page.getByRole("button", { name: "Registrar caso", exact: true }).click();
       await page.getByLabel("ID del caso", { exact: true }).fill(`AGE-${days}`);
+      if (days === 0) await page.getByLabel("Nombre del cliente", { exact: true }).fill("Cliente To Do");
       await page.locator('input[name="title"]').fill(`Prueba de plazo de ${days} dias`);
       await page.getByLabel("Fecha de apertura", { exact: true }).fill(addDays(today, -days));
       await page.getByRole("dialog").getByRole("button", { name: "Registrar caso", exact: true }).click();
       await count(page, "active-total", ++activeCount);
     }
-    const expectedOrder = ["AGE-30", "AGE-14", "AGE-13", "TEST-001", "AGE-6", "AGE-5", "AGE-0"];
+    const expectedOrder = ["AGE-30", "AGE-14", "AGE-13", "AGE-12", "AGE-11", "TEST-001", "AGE-6", "AGE-5", "AGE-0"];
     assert.deepEqual(await page.locator("tbody .case-id").allTextContents(), expectedOrder);
+    assert.equal(await page.getByTestId("case-customer").filter({ hasText: "Sin cliente" }).count(), 7);
     assert.equal(await page.getByRole("columnheader", { name: "D\u00cdAS ABIERTO", exact: true }).getAttribute("aria-sort"), "descending");
-    for (const [number, level] of [["AGE-30", "overdue"], ["AGE-14", "overdue"], ["AGE-13", "warning"], ["AGE-6", "warning"], ["AGE-5", "safe"], ["AGE-0", "safe"]] as const) {
+    for (const [number, level] of [["AGE-30", "overdue"], ["AGE-14", "overdue"], ["AGE-13", "overdue"], ["AGE-12", "overdue"], ["AGE-11", "warning"], ["AGE-6", "warning"], ["AGE-5", "safe"], ["AGE-0", "safe"]] as const) {
       const row = page.getByRole("row").filter({ has: page.getByText(number, { exact: true }) });
       await ageTone(row.getByTestId("case-age"), level);
     }
+    const rowFor = (number: string) => page.getByRole("row").filter({ has: page.getByText(number, { exact: true }) });
+    const hoverRow = rowFor("AGE-6");
+    await hoverRow.hover();
+    await page.waitForTimeout(200);
+    assert.deepEqual(await hoverRow.evaluate(element => {
+      const style = getComputedStyle(element);
+      return { background: style.backgroundColor, cursor: style.cursor };
+    }), { background: "rgb(34, 49, 61)", cursor: "pointer" });
+    await hoverRow.locator(".col-customer").click();
+    assert.equal(await page.locator(".focus-id").textContent(), "AGE-6");
+    assert.equal(await hoverRow.getAttribute("aria-selected"), "true");
+    await rowFor("AGE-11").getByTestId("case-age").click();
+    assert.equal(await page.locator(".focus-id").textContent(), "AGE-11");
+    await rowFor("AGE-5").focus();
+    await page.keyboard.press("Enter");
+    assert.equal(await page.locator(".focus-id").textContent(), "AGE-5");
+    await rowFor("AGE-0").focus();
+    await page.keyboard.press("Space");
+    assert.equal(await page.locator(".focus-id").textContent(), "AGE-0");
+    assert.equal(await page.locator('tbody tr[aria-selected="true"]').count(), 1);
+    await page.getByRole("button", { name: "Editar caso AGE-14", exact: true }).click();
+    assert.equal(await page.locator(".focus-id").textContent(), "AGE-0");
+    await page.getByRole("dialog").getByRole("button", { name: "Cancelar", exact: true }).last().click();
     await page.getByLabel("Buscar casos", { exact: true }).fill("AGE-");
     assert.deepEqual(await page.locator("tbody .case-id").allTextContents(), expectedOrder.filter(number => number.startsWith("AGE-")));
     await page.getByLabel("Buscar casos", { exact: true }).fill("");
@@ -253,7 +369,7 @@ test("Electron registers, closes, edits and persists tracking through a full app
     await page.getByRole("button", { name: "Cerrar Caso", exact: true }).click();
     await page.getByLabel("Fecha de cierre", { exact: true }).fill(closureDate);
     await page.getByRole("button", { name: "Confirmar cierre", exact: true }).click();
-    await count(page, "active-total", 6);
+    await count(page, "active-total", 8);
     await count(page, "closed-total", 1);
     const overdueClosedAge = `${daysBetween(addDays(today, -40), closureDate)} d\u00edas hasta el cierre`;
     await age(page, "case-age", overdueClosedAge);
@@ -269,7 +385,7 @@ test("Electron registers, closes, edits and persists tracking through a full app
     await page.getByRole("button", { name: "Editar caso AGE-0", exact: true }).click();
     await page.getByRole("button", { name: "Reabrir caso", exact: true }).click();
     await page.getByRole("button", { name: "Confirmar reapertura", exact: true }).click();
-    await count(page, "active-total", 7);
+    await count(page, "active-total", 9);
     await page.getByRole("button", { name: /^Activos/ }).click();
     await age(page, "case-age", "40 d\u00edas abierto");
     await page.getByRole("button", { name: "Seleccionar caso AGE-5", exact: true }).click();
@@ -277,12 +393,13 @@ test("Electron registers, closes, edits and persists tracking through a full app
     await age(page, "focus-case-age", "5 d\u00edas abierto");
     assert.equal(await page.locator("tbody .case-id").first().textContent(), "AGE-0");
     await page.reload();
-    await count(page, "active-total", 7);
+    await count(page, "active-total", 9);
     await age(page, "case-age", "40 d\u00edas abierto");
     await age(page, "focus-case-age", "40 d\u00edas abierto");
     await ageTone(page.getByTestId("focus-case-age"), "overdue");
     assert.deepEqual(await page.locator("tbody .case-id").allTextContents(), ["AGE-0", ...expectedOrder.slice(0, -1)]);
     await page.getByRole("button", { name: "Crear To Do para este caso", exact: true }).click();
+    assert.match(await page.locator('select[name="caseId"] option:checked').textContent() || "", /Cliente To Do/);
     await page.getByLabel("Tarea", { exact: true }).fill("Revisar resultados To Do");
     await page.getByLabel("Notas", { exact: true }).fill("Solo datos sinteticos de prueba");
     await page.getByLabel("Fecha l\u00edmite", { exact: true }).fill(addDays(today, -1));
@@ -293,12 +410,16 @@ test("Electron registers, closes, edits and persists tracking through a full app
     await page.getByTestId("todo-row").waitFor();
     assert.match(await page.getByTestId("todo-row").textContent() || "", /Vencida/);
     assert.match(await page.getByTestId("todo-row").textContent() || "", /AGE-0/);
+    assert.match(await page.getByTestId("todo-row").textContent() || "", /Cliente To Do/);
+    await page.getByLabel("Buscar tareas", { exact: true }).fill("cliente to do");
+    assert.equal(await page.getByTestId("todo-row").count(), 1);
+    await page.getByLabel("Buscar tareas", { exact: true }).fill("");
     await page.getByRole("button", { name: "Completar tarea Revisar resultados To Do", exact: true }).click();
     await page.getByRole("button", { name: /^Completadas/ }).click();
     await page.getByRole("button", { name: "Reabrir tarea Revisar resultados To Do", exact: true }).click();
     await page.getByRole("button", { name: /^Pendientes/ }).click();
     await page.getByRole("button", { name: "Ver caso AGE-0", exact: true }).click();
-    await count(page, "active-total", 7);
+    await count(page, "active-total", 9);
     await count(page, "closed-total", 0);
     await page.getByRole("button", { name: /^To Do/ }).click();
     await page.getByRole("button", { name: "Nueva tarea", exact: true }).click();
@@ -344,11 +465,103 @@ test("Electron registers, closes, edits and persists tracking through a full app
     await application!.close();
     application = undefined;
     page = await launch();
-    await count(page, "active-total", 7);
+    await count(page, "active-total", 9);
     await count(page, "closed-total", 0);
     await page.getByRole("button", { name: /^To Do/ }).click();
     await page.getByTestId("todo-row").waitFor();
     assert.match(await page.getByTestId("todo-row").textContent() || "", /Recordatorio enviado/);
+    await page.evaluate(async ({ openedAt, openedAt11, openedAt12, closureDate }) => {
+      for (let index = 0; index < 36; index++) {
+        const created = await window.cierres.create({
+          number: `SCROLL-${String(index).padStart(2, "0")}`,
+          title: "Descripcion sintetica para comprobar detalles extensos. ".repeat(4),
+          customerName: index === 35 ? "Cliente".repeat(22) : `Cliente sintetico ${index}`,
+          product: "PostgreSQL", status: "work",
+          openedAt: index === 0 ? openedAt12 : index === 1 ? openedAt11 : openedAt
+        });
+        if (!created.ok) throw new Error(created.error);
+        if (index < 18) {
+          const closed = await window.cierres.close(created.value.id, closureDate);
+          if (!closed.ok) throw new Error(closed.error);
+        }
+      }
+    }, { openedAt, openedAt11: addDays(closureDate, -11), openedAt12: addDays(closureDate, -12), closureDate });
+    await page.reload();
+    await count(page, "active-total", 27);
+    await count(page, "closed-total", 18);
+    for (const [width, height] of [[1640, 1000], [1380, 930], [1100, 800], [980, 720]]) {
+      const viewport = await application!.evaluate(({ BrowserWindow }, { width, height }) => {
+        const window = BrowserWindow.getAllWindows()[0];
+        window.setContentSize(width, height);
+        return window.getContentSize();
+      }, { width, height });
+      await page.waitForFunction(([width, height]) =>
+        Math.abs(innerWidth - width) <= 1 && Math.abs(innerHeight - height) <= 1, viewport);
+      await dashboardLayout(page, true);
+      await page.getByRole("button", { name: "Seleccionar caso SCROLL-35", exact: true }).click();
+      assert.equal(await page.locator(".focus-id").textContent(), "SCROLL-35");
+      const pinned = await page.locator(".close-primary").boundingBox();
+      await page.getByRole("region", { name: "Lista de casos", exact: true }).evaluate(element => { element.scrollTop = 0; });
+      await page.getByRole("region", { name: "Lista de casos", exact: true }).focus();
+      await page.keyboard.press("Control+End");
+      await page.waitForFunction(() => {
+        const list = document.querySelector(".case-list-scroll")!;
+        return list.scrollTop > 0 && Math.abs(list.scrollHeight - list.clientHeight - list.scrollTop) < 2;
+      });
+      const scrolled = await page.evaluate(() => {
+        const list = document.querySelector(".case-list-scroll")!;
+        const bounds = list.getBoundingClientRect();
+        const header = document.querySelector(".case-table th")!.getBoundingClientRect();
+        const lastRow = document.querySelector(".case-table tbody tr:last-child")!.getBoundingClientRect();
+        const details = document.querySelector(".focus-content")!;
+        return {
+          stickyHeader: Math.abs(header.top - bounds.top) < 1,
+          lastRowReachable: lastRow.bottom <= bounds.bottom + 1,
+          detailsOverflow: details.scrollHeight > details.clientHeight
+        };
+      });
+      assert.ok(Object.values(scrolled).every(Boolean), `Independent scroll: ${JSON.stringify(scrolled)}`);
+      await page.getByRole("region", { name: "Detalles del caso", exact: true }).focus();
+      await page.keyboard.press("Control+End");
+      await page.waitForFunction(() => {
+        const details = document.querySelector(".focus-content")!;
+        return details.scrollTop > 0 && Math.abs(details.scrollHeight - details.clientHeight - details.scrollTop) < 2;
+      });
+      assert.deepEqual(await page.locator(".close-primary").boundingBox(), pinned);
+      await dashboardLayout(page, true);
+      await page.getByRole("button", { name: "Cerrar Caso", exact: true }).click();
+      assert.equal(await page.getByRole("dialog").getByRole("combobox").locator("option:checked").textContent()
+        .then(value => value?.startsWith("SCROLL-35 - ")), true);
+      await page.getByRole("dialog").getByRole("button", { name: "Cancelar", exact: true }).last().click();
+      await page.getByLabel("Buscar casos", { exact: true }).fill("sin resultados sinteticos");
+      await page.getByRole("heading", { name: "Sin coincidencias", exact: true }).waitFor();
+      await dashboardLayout(page);
+      await page.getByLabel("Buscar casos", { exact: true }).fill("SCROLL-18");
+      assert.equal(await page.locator("tbody tr").count(), 1);
+      await dashboardLayout(page);
+      await page.getByLabel("Buscar casos", { exact: true }).fill("");
+      await page.getByRole("button", { name: /^Cerrados/ }).first().click();
+      await dashboardLayout(page, true);
+      await ageTone(page.getByRole("row").filter({ has: page.getByText("SCROLL-00", { exact: true }) }).getByTestId("case-age"), "overdue");
+      await ageTone(page.getByRole("row").filter({ has: page.getByText("SCROLL-01", { exact: true }) }).getByTestId("case-age"), "warning");
+      await page.getByRole("button", { name: "Editar caso SCROLL-17", exact: true }).click();
+      await page.getByRole("dialog").getByRole("button", { name: "Cancelar", exact: true }).last().click();
+      await page.getByRole("button", { name: /^Activos/ }).click();
+      await dashboardLayout(page, true);
+      assert.equal(await page.locator(".case-list-scroll").evaluate(element => element.scrollTop), 0);
+      await page.getByRole("button", { name: "Seleccionar caso SCROLL-18", exact: true }).click();
+      assert.equal(await page.locator(".focus-content").evaluate(element => element.scrollTop), 0);
+      if (process.env.CIERRES_SCREENSHOT_DIR) {
+        await page.getByRole("region", { name: "Lista de casos", exact: true }).evaluate(element => { element.scrollTop = 0; });
+        await page.getByRole("region", { name: "Detalles del caso", exact: true }).evaluate(element => { element.scrollTop = 0; });
+        await page.screenshot({ path: path.join(process.env.CIERRES_SCREENSHOT_DIR, `cierres-dashboard-${width}x${height}.png`) });
+      }
+    }
+    await page.getByRole("button", { name: /^To Do/ }).click();
+    await page.getByTestId("todo-row").waitFor();
+    assert.equal(await page.locator(".app-dashboard").count(), 0);
+    await page.getByRole("button", { name: "Ver caso AGE-0", exact: true }).click();
+    await dashboardLayout(page, true);
     assert.deepEqual(failures, []);
     assert.equal(await page.evaluate(() => typeof (window as Window & { require?: unknown }).require), "undefined");
   } finally {
